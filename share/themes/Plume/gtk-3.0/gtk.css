@@ -1,0 +1,145 @@
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained-dark.css");
+
+@define-color theme_bg_color #171a21;
+@define-color theme_base_color #171a21;
+@define-color theme_fg_color #edf0f5;
+@define-color theme_text_color #edf0f5;
+@define-color theme_selected_bg_color #2f7fe6;
+@define-color theme_selected_fg_color #ffffff;
+@define-color borders #252b37;
+@define-color insensitive_bg_color #13161c;
+@define-color insensitive_fg_color #7c8798;
+
+* {
+  font-family: "Onest", "Sora", sans-serif;
+}
+
+window,
+.background {
+  background-color: #171a21;
+  color: #edf0f5;
+}
+
+menubar,
+toolbar,
+headerbar,
+.titlebar {
+  background-color: #13161c;
+  background-image: none;
+  color: #edf0f5;
+  border-color: #252b37;
+  box-shadow: none;
+}
+
+paned > separator {
+  background-color: #252b37;
+  min-width: 1px;
+  min-height: 1px;
+}
+
+.thunar .sidebar,
+.thunar .sidebar .view,
+.thunar treeview.sidebar {
+  background-color: #13161c;
+  color: #cfd5df;
+}
+
+.thunar .standard-view .view,
+.thunar treeview.view,
+.thunar iconview.view {
+  background-color: #171a21;
+  color: #edf0f5;
+}
+
+.thunar treeview.view:selected,
+.thunar iconview.view:selected,
+.thunar .sidebar .view:selected {
+  background-color: #252b37;
+  color: #ffffff;
+}
+
+.thunar treeview.view:selected:focus,
+.thunar .sidebar .view:selected:focus {
+  background-color: #2f7fe6;
+  color: #ffffff;
+}
+
+entry {
+  background-color: #1c212b;
+  color: #edf0f5;
+  border: 1px solid #2b3342;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+entry:focus {
+  border-color: #2f7fe6;
+}
+
+button {
+  background-image: none;
+  background-color: #1c212b;
+  color: #edf0f5;
+  border: 1px solid #2b3342;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+button:hover {
+  background-color: #252b37;
+  border-color: #2f7fe6;
+}
+
+button.flat {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+button.flat:hover {
+  background-color: #202633;
+  border-color: #2b3342;
+}
+
+notebook > header {
+  background-color: #13161c;
+  border-color: #252b37;
+}
+
+notebook > header tab {
+  background-color: transparent;
+  color: #8b96a8;
+  border: none;
+  padding: 5px 10px;
+}
+
+notebook > header tab:checked {
+  background-color: #171a21;
+  color: #edf0f5;
+  box-shadow: inset 0 -2px #2f7fe6;
+}
+
+menu,
+.menu {
+  background-color: #171a21;
+  color: #edf0f5;
+  border: 1px solid #2b3342;
+}
+
+menu menuitem:hover,
+.menu menuitem:hover {
+  background-color: #252b37;
+  color: #ffffff;
+}
+
+statusbar {
+  background-color: #13161c;
+  color: #8b96a8;
+  border-top: 1px solid #252b37;
+}
+
+scrollbar slider {
+  background-color: #2b3342;
+  border-radius: 4px;
+  min-width: 6px;
+  min-height: 6px;
+}

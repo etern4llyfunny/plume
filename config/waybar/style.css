@@ -1,0 +1,75 @@
+* {
+  font-family: "Onest", "Sora", "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
+  font-size: 13px;
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+}
+window#waybar {
+  background: #13161c;
+  color: #edf0f5;
+  border-bottom: 1px solid #252b37;
+}
+#image.plume {
+  padding: 4px 8px;
+  margin: 4px 4px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+#image.plume:hover {
+  background: #1c212b;
+  border-color: #2f7fe6;
+}
+#workspaces button {
+  color: #8b96a8;
+  padding: 0 10px;
+  margin: 5px 2px;
+  border-radius: 6px;
+}
+#workspaces button:hover {
+  background: #1c212b;
+  color: #edf0f5;
+}
+#workspaces button.active {
+  background: #2f7fe6;
+  color: #ffffff;
+}
+#taskbar button {
+  color: #cfd5df;
+  padding: 0 10px;
+  margin: 5px 2px;
+  border-radius: 6px;
+}
+#taskbar button.active {
+  background: #1c212b;
+  border: 1px solid #2b3342;
+}
+#pulseaudio, #clock, #network, #battery, #custom-power {
+  padding: 0 10px;
+  margin: 5px 2px;
+  color: #cfd5df;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+#pulseaudio:hover, #clock:hover, #network:hover, #battery:hover {
+  background: #1c212b;
+  border-color: #2b3342;
+  color: #edf0f5;
+}
+#pulseaudio.muted {
+  color: #7c8798;
+}
+#clock {
+  font-weight: 500;
+  color: #edf0f5;
+}
+#custom-power {
+  margin-right: 8px;
+  padding: 0 11px;
+  color: #cfd5df;
+}
+#custom-power:hover {
+  background: #2a1b1e;
+  border-color: #e04f3e;
+  color: #ffffff;
+}

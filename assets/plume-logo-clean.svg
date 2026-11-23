@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Plume</title>
+  <defs>
+    <linearGradient id="vl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c6cdd8"/>
+      <stop offset="1" stop-color="#7c8798"/>
+    </linearGradient>
+    <linearGradient id="vr" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8b96a8"/>
+      <stop offset="1" stop-color="#4e5869"/>
+    </linearGradient>
+    <linearGradient id="sh" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#cfd5df"/>
+      <stop offset=".5" stop-color="#edf0f5"/>
+      <stop offset="1" stop-color="#d5dbe5"/>
+    </linearGradient>
+    <linearGradient id="ca" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b8c0ce"/>
+      <stop offset=".5" stop-color="#e3e7ee"/>
+      <stop offset="1" stop-color="#c3cbd8"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(256 256) rotate(35) scale(1.12) translate(-256 -256)">
+    <path fill="url(#vl)" d="M256 412C238 392 207 320 206 205C205 190 206 172 208 158L230 189L209 152C212 100 232 56 256 36Z"/>
+    <path fill="url(#vr)" d="M256 36C280 56 330 120 330 205C331 232 330 262 328 285L305 318L327 291C325 340 290 395 256 412Z"/>
+    <path fill="url(#ca)" d="M252.4 408L251.6 470Q256 492 260.4 470L259.6 408Z"/>
+    <path fill="url(#sh)" d="M252.4 414L254.7 34Q256 27 257.3 34L259.6 414Z"/>
+  </g>
+</svg>

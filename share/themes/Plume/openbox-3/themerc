@@ -1,0 +1,14 @@
+border.width: 1
+padding.width: 10
+padding.height: 8
+window.active.border.color: #2f7fe6
+window.inactive.border.color: #252b37
+window.active.title.bg: flat solid
+window.active.title.bg.color: #171a21
+window.inactive.title.bg: flat solid
+window.inactive.title.bg.color: #13161c
+window.active.label.text.color: #edf0f5
+window.inactive.label.text.color: #7c8798
+window.active.button.unpressed.image.color: #a4aebd
+window.inactive.button.unpressed.image.color: #5b6577
+window.label.text.justify: left

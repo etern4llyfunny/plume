@@ -1,0 +1,8 @@
+font=Onest 10
+background-color=#171a21
+text-color=#edf0f5
+border-color=#2f7fe6
+border-size=1
+border-radius=8
+padding=12
+default-timeout=5000

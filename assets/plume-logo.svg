@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Птичье перо</title>
+<defs>
+<linearGradient id="vl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bdc1cc"/><stop offset="1" stop-color="#7d8088"/></linearGradient>
+<linearGradient id="vr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8e9199"/><stop offset="1" stop-color="#4f5156"/></linearGradient>
+<linearGradient id="sh" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c6cad7"/><stop offset=".5" stop-color="#f4f9ff"/><stop offset="1" stop-color="#cfd3e0"/></linearGradient>
+<linearGradient id="ca" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b5b9c4"/><stop offset=".5" stop-color="#dfe4f2"/><stop offset="1" stop-color="#c0c4d1"/></linearGradient>
+<clipPath id="cv">
+<path d="M256 412C238 392 207 320 206 205C205 190 206 172 208 158L230 189L209 152C212 100 232 56 256 36Z"/>
+<path d="M256 36C280 56 330 120 330 205C331 232 330 262 328 285L305 318L327 291C325 340 290 395 256 412Z"/>
+</clipPath>
+</defs>
+<g transform="translate(256 256) rotate(35) scale(1.12) translate(-256 -256)">
+<path fill="url(#vl)" d="M256 412C238 392 207 320 206 205C205 190 206 172 208 158L230 189L209 152C212 100 232 56 256 36Z"/>
+<path fill="url(#vr)" d="M256 36C280 56 330 120 330 205C331 232 330 262 328 285L305 318L327 291C325 340 290 395 256 412Z"/>
+<g clip-path="url(#cv)" fill="none" stroke="#212224" stroke-opacity=".25" stroke-width="1.3" stroke-linecap="round">
+<path d="M256 404Q221 375 190 330M256 388Q221 359 190 314M256 372Q221 343 190 298M256 356Q221 327 190 282M256 340Q221 311 190 266M256 324Q221 295 190 250M256 308Q221 279 190 234M256 292Q221 263 190 218M256 276Q221 247 190 202M256 260Q221 231 190 186M256 244Q221 215 190 170M256 228Q221 199 190 154M256 212Q221 183 190 138M256 196Q221 167 190 122M256 180Q221 151 190 106M256 164Q221 135 190 90M256 148Q221 119 190 74M256 132Q221 103 190 58M256 116Q221 87 190 42M256 100Q221 71 190 26M256 84Q221 55 190 10M256 68Q221 39 190 -6M256 52Q221 23 190 -22"/>
+<path d="M256 404Q306 362 352 297M256 388Q306 346 352 281M256 372Q306 330 352 265M256 356Q306 314 352 249M256 340Q306 298 352 233M256 324Q306 282 352 217M256 308Q306 266 352 201M256 292Q306 250 352 185M256 276Q306 234 352 169M256 260Q306 218 352 153M256 244Q306 202 352 137M256 228Q306 186 352 121M256 212Q306 170 352 105M256 196Q306 154 352 89M256 180Q306 138 352 73M256 164Q306 122 352 57M256 148Q306 106 352 41M256 132Q306 90 352 25M256 116Q306 74 352 9M256 100Q306 58 352 -7M256 84Q306 42 352 -23M256 68Q306 26 352 -39M256 52Q306 10 352 -55"/>
+</g>
+<path fill="url(#ca)" d="M252.4 408L251.6 470Q256 492 260.4 470L259.6 408Z"/>
+<path fill="url(#sh)" d="M252.4 414L254.7 34Q256 27 257.3 34L259.6 414Z"/>
+</g>
+</svg>
