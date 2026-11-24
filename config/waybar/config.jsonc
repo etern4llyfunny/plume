@@ -5,7 +5,11 @@
   "spacing": 4,
   "modules-left": [
     "image#plume",
-    "wayfire/workspaces"
+    "custom/ws1",
+    "custom/ws2",
+    "custom/ws3",
+    "custom/ws4",
+    "custom/ws5"
   ],
   "modules-center": [],
   "modules-right": [
@@ -22,11 +26,6 @@
     "size": 22,
     "on-click": "plume-launcher",
     "tooltip": false
-  },
-  "wayfire/workspaces": {
-    "format": "{index}",
-    "disable-click": false,
-    "disable-scroll": true
   },
   "wlr/taskbar": {
     "format": "{title:.22}",
@@ -82,6 +81,46 @@
   "custom/power": {
     "format": "󰐥",
     "on-click": "plume-power",
+    "tooltip": false
+  },
+  "custom/ws1": {
+    "exec": "plume-ws get 1",
+    "return-type": "json",
+    "signal": 8,
+    "interval": 2,
+    "on-click": "plume-ws set 1",
+    "tooltip": false
+  },
+  "custom/ws2": {
+    "exec": "plume-ws get 2",
+    "return-type": "json",
+    "signal": 8,
+    "interval": 2,
+    "on-click": "plume-ws set 2",
+    "tooltip": false
+  },
+  "custom/ws3": {
+    "exec": "plume-ws get 3",
+    "return-type": "json",
+    "signal": 8,
+    "interval": 2,
+    "on-click": "plume-ws set 3",
+    "tooltip": false
+  },
+  "custom/ws4": {
+    "exec": "plume-ws get 4",
+    "return-type": "json",
+    "signal": 8,
+    "interval": 2,
+    "on-click": "plume-ws set 4",
+    "tooltip": false
+  },
+  "custom/ws5": {
+    "exec": "plume-ws get 5",
+    "return-type": "json",
+    "signal": 8,
+    "interval": 2,
+    "on-click": "plume-ws set 5",
     "tooltip": false
   }
 }

@@ -4,7 +4,7 @@ LIBS   = $(shell pkg-config --cflags --libs gtk4 gtk4-layer-shell-0 wayland-clie
 GTK4   = $(shell pkg-config --cflags --libs gtk4)
 
 BINS    = plume-launcher plume-power plume-settings plume-dock
-SCRIPTS = plume-session plume-apply-theme plume-lock plume-screenshot plume-pinned
+SCRIPTS = plume-session plume-apply-theme plume-lock plume-screenshot plume-pinned plume-ws
 
 all: $(BINS)
 

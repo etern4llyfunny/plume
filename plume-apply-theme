@@ -123,7 +123,7 @@ window#waybar {{
   background: {p['bg_hover']};
   border-color: {p['accent']};
 }}
-#workspaces button {{
+#workspaces button, #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4, #custom-ws5 {{
   color: {p['muted']};
   padding: 0 10px;
   margin: 5px 2px;
@@ -133,7 +133,7 @@ window#waybar {{
   background: {p['bg_hover']};
   color: {p['fg']};
 }}
-#workspaces button.active,
+#workspaces button.active, #custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active, #custom-ws5.active,
 #workspaces button.focused {{
   background: {p['accent']};
   color: #ffffff;

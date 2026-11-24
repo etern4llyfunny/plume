@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+import glob
+import json
+import os
+import socket
+import struct
+import subprocess
+import sys
+
+
+def get_sock() -> str:
+    env = os.environ.get("WAYFIRE_SOCKET")
+    if env and os.path.exists(env):
+        return env
+    rt = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    socks = sorted(glob.glob(f"{rt}/wayfire-wayland-*.socket"))
+    if not socks:
+        sys.exit(1)
+    return socks[-1]
+
+
+def call(method: str, data: dict | None = None):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    s.connect(get_sock())
+    payload = json.dumps({"method": method, "data": data or {}}).encode()
+    s.sendall(struct.pack("<I", len(payload)) + payload)
+    raw = s.recv(4)
+    if len(raw) < 4:
+        s.close()
+        return {}
+    n = struct.unpack("<I", raw)[0]
+    resp = b""
+    while len(resp) < n:
+        chunk = s.recv(n - len(resp))
+        if not chunk:
+            break
+        resp += chunk
+    s.close()
+    return json.loads(resp.decode())
+
+
+def main() -> None:
+    if len(sys.argv) < 3:
+        sys.exit(1)
+    cmd = sys.argv[1]
+    idx = int(sys.argv[2])
+
+    if cmd == "set":
+        outs = call("window-rules/list-outputs")
+        out_id = outs[0]["id"] if isinstance(outs, list) and outs else 1
+        call("vswitch/set-workspace", {"x": idx - 1, "y": 0, "output-id": out_id})
+        subprocess.run(["pkill", "-RTMIN+8", "-x", "waybar"], check=False)
+    elif cmd == "get":
+        wsets = call("window-rules/list-wsets")
+        cur_x = wsets[0]["workspace"]["x"] if isinstance(wsets, list) and wsets else 0
+        cls = "active" if cur_x == idx - 1 else ""
+        print(json.dumps({"text": str(idx), "class": cls}))
+
+
+if __name__ == "__main__":
+    main()
