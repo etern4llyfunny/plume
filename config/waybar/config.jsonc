@@ -3,10 +3,20 @@
   "position": "top",
   "height": 40,
   "spacing": 4,
-  "modules-left": ["image#plume", "wayfire/workspaces", "wlr/taskbar"],
+  "modules-left": [
+    "image#plume",
+    "wayfire/workspaces"
+  ],
   "modules-center": [],
-  "modules-right": ["tray", "pulseaudio", "clock", "network", "battery", "custom/settings", "custom/power"],
-
+  "modules-right": [
+    "tray",
+    "pulseaudio",
+    "clock",
+    "network",
+    "battery",
+    "custom/settings",
+    "custom/power"
+  ],
   "image#plume": {
     "path": "/usr/share/plume/assets/plume-logo-clean.svg",
     "size": 22,
@@ -24,13 +34,17 @@
     "tooltip": false
   },
   "tray": {
-    "icon-size": 16,
+    "icon-size": 18,
     "spacing": 8
   },
   "pulseaudio": {
     "format": "{icon}  {volume}%",
     "format-muted": "󰖁",
-    "format-icons": ["󰕿", "󰖀", "󰕾"],
+    "format-icons": [
+      "󰕿",
+      "󰖀",
+      "󰕾"
+    ],
     "on-click": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
     "on-click-right": "pavucontrol",
     "scroll-step": 5,
@@ -52,12 +66,18 @@
   "battery": {
     "format": "{icon}  {capacity}%",
     "format-charging": "󰂄  {capacity}%",
-    "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰁹"]
+    "format-icons": [
+      "󰁺",
+      "󰁼",
+      "󰁾",
+      "󰂀",
+      "󰁹"
+    ]
   },
   "custom/settings": {
     "format": "󰒓",
     "on-click": "plume-settings",
-    "tooltip-format": "Настройки Plume"
+    "tooltip": false
   },
   "custom/power": {
     "format": "󰐥",

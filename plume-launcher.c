@@ -149,6 +149,45 @@ static gboolean on_sigusr1(gpointer user_data) {
     return G_SOURCE_CONTINUE;
 }
 
+
+static gboolean is_pinned_desktop(const char *desktop_id) {
+    if (!desktop_id || !*desktop_id) return FALSE;
+    char *pf = g_build_filename(g_get_user_config_dir(), "plume", "pinned", NULL);
+    char *content = NULL;
+    gboolean found = FALSE;
+    if (g_file_get_contents(pf, &content, NULL, NULL)) {
+        char **lines = g_strsplit(content, "\n", -1);
+        for (int i = 0; lines[i]; i++) {
+            g_strstrip(lines[i]);
+            if (strcmp(lines[i], desktop_id) == 0) {
+                found = TRUE;
+                break;
+            }
+        }
+        g_strfreev(lines);
+        g_free(content);
+    }
+    g_free(pf);
+    return found;
+}
+
+static void on_pin_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    const char *did = g_object_get_data(G_OBJECT(btn), "desktop-id");
+    if (!did || !*did) return;
+    char *argv[] = { (char *)"plume-pinned", (char *)"toggle", (char *)did, NULL };
+    GError *err = NULL;
+    g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &err);
+    if (err) g_error_free(err);
+
+    gboolean now_pinned = !is_pinned_desktop(did);
+    gtk_button_set_label(btn, now_pinned ? "󰐃" : "󰐂");
+    if (now_pinned)
+        gtk_widget_add_css_class(GTK_WIDGET(btn), "pinned");
+    else
+        gtk_widget_remove_css_class(GTK_WIDGET(btn), "pinned");
+}
+
 static void launch_row(State *st, GtkListBoxRow *row) {
     if (!row) return;
     GAppInfo *info = g_object_get_data(G_OBJECT(row), "app-info");
@@ -275,7 +314,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "list.plume-list row:hover {"
         "  background: #202633;"
         "}"
-        "list.plume-list row:selected {"
+        "button.plume-pin {""  background: transparent; border: none; color: #8b96a8; padding: 2px 6px; min-height: 20px; border-radius: 4px; box-shadow: none;""}""button.plume-pin:hover, button.plume-pin.pinned {""  color: #5aa0f5; background: #252b37;""}""list.plume-list row:selected {"
         "  background: #252b37;"
         "  color: #ffffff;"
         "}"
@@ -358,8 +397,20 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
         GtkWidget *lbl = gtk_label_new(name);
         gtk_label_set_xalign(GTK_LABEL(lbl), 0.0f);
+        gtk_widget_set_hexpand(lbl, TRUE);
         gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
         gtk_box_append(GTK_BOX(row_box), lbl);
+
+        const char *desktop_id = g_app_info_get_id(info);
+        if (desktop_id && *desktop_id) {
+            gboolean pinned = is_pinned_desktop(desktop_id);
+            GtkWidget *pin_btn = gtk_button_new_with_label(pinned ? "󰐃" : "󰐂");
+            gtk_widget_add_css_class(pin_btn, "plume-pin");
+            if (pinned) gtk_widget_add_css_class(pin_btn, "pinned");
+            g_object_set_data_full(G_OBJECT(pin_btn), "desktop-id", g_strdup(desktop_id), g_free);
+            g_signal_connect(pin_btn, "clicked", G_CALLBACK(on_pin_clicked), st);
+            gtk_box_append(GTK_BOX(row_box), pin_btn);
+        }
 
         GtkWidget *row = gtk_list_box_row_new();
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);

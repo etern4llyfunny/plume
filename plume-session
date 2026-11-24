@@ -67,6 +67,7 @@ export GSK_RENDERER="gl"
 unset GDMSESSION GNOME_DESKTOP_SESSION_ID
 
 plume-apply-theme --no-reload
+plume-pinned apply-runtime "$RT_DIR"
 
 wayfire -c "$RT_DIR/wayfire/wayfire.ini" &
 WM_PID=$!

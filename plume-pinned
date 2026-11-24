@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+PIN_FILE = Path.home() / ".config" / "plume" / "pinned"
+
+
+def read_pins() -> list[str]:
+    if not PIN_FILE.is_file():
+        return []
+    lines = []
+    for raw in PIN_FILE.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = raw.strip()
+        if s and s not in lines:
+            lines.append(s)
+    return lines
+
+
+def write_pins(pins: list[str]) -> None:
+    PIN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PIN_FILE.write_text("\n".join(pins) + ("\n" if pins else ""), encoding="utf-8")
+
+
+def resolve_icon_path(icon_name: str) -> str:
+    if not icon_name:
+        return ""
+    p = Path(icon_name)
+    if p.is_file():
+        return str(p)
+
+    # Ищем в популярных темах и hicolor/pixmaps
+    exts = (".svg", ".png")
+    roots = [
+        Path.home() / ".local/share/icons",
+        Path("/usr/share/icons/Papirus-Dark"),
+        Path("/usr/share/icons/Papirus"),
+        Path("/usr/share/icons/Adwaita"),
+        Path("/usr/share/icons/hicolor"),
+        Path("/usr/share/pixmaps"),
+    ]
+    subdirs = (
+        "scalable/apps", "48x48/apps", "32x32/apps", "24x24/apps",
+        "22x22/apps", "64x64/apps", "128x128/apps", "256x256/apps",
+        "scalable/categories", "48x48/categories", "",
+    )
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for sub in subdirs:
+            d = root / sub if sub else root
+            if not d.is_dir():
+                continue
+            for ext in exts:
+                cand = d / f"{icon_name}{ext}"
+                if cand.is_file():
+                    return str(cand)
+    return ""
+
+
+def find_icon_and_exec(desktop_id: str) -> tuple[str, str, str]:
+    plume_root = Path(os.environ.get("PLUME_ROOT") or "/usr/share/plume")
+    search_dirs = [
+        plume_root / "share/applications",
+        Path.home() / ".local/share/applications",
+        Path("/usr/local/share/applications"),
+        Path("/usr/share/applications"),
+    ]
+    path = None
+    for d in search_dirs:
+        cand = d / desktop_id
+        if cand.is_file():
+            path = cand
+            break
+    if not path:
+        return ("", desktop_id, desktop_id.removesuffix(".desktop"))
+
+    icon = ""
+    exec_cmd = ""
+    name = desktop_id.removesuffix(".desktop")
+    in_entry = False
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            in_entry = (s == "[Desktop Entry]")
+            continue
+        if not in_entry:
+            continue
+        if s.startswith("Icon=") and not icon:
+            icon = s.split("=", 1)[1].strip()
+        elif s.startswith("Exec=") and not exec_cmd:
+            raw_exec = s.split("=", 1)[1].strip()
+            parts = [p for p in raw_exec.split() if not p.startswith("%")]
+            exec_cmd = " ".join(parts)
+        elif s.startswith("Name=") and name == desktop_id.removesuffix(".desktop"):
+            name = s.split("=", 1)[1].strip()
+
+    return (resolve_icon_path(icon), exec_cmd or desktop_id, name)
+
+
+def apply_to_runtime(rt: Path) -> None:
+    cfg_path = rt / "waybar" / "config.jsonc"
+    if not cfg_path.is_file():
+        return
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    pins = read_pins()
+
+    left = [m for m in data.get("modules-left", []) if not m.startswith(("custom/pin_", "image#pin_"))]
+    for k in list(data.keys()):
+        if k.startswith(("custom/pin_", "image#pin_")):
+            del data[k]
+
+    pin_names = []
+    for idx, did in enumerate(pins):
+        icon_path, cmd, name = find_icon_and_exec(did)
+        if icon_path:
+            mod_name = f"image#pin_{idx}"
+            data[mod_name] = {
+                "path": icon_path,
+                "size": 18,
+                "on-click": cmd,
+                "tooltip": True,
+                "tooltip-format": name,
+            }
+        else:
+            mod_name = f"custom/pin_{idx}"
+            data[mod_name] = {
+                "format": name[:2].upper(),
+                "on-click": cmd,
+                "tooltip-format": name,
+            }
+        pin_names.append(mod_name)
+
+    new_left = []
+    inserted = False
+    for m in left:
+        new_left.append(m)
+        if m == "wayfire/workspaces" and not inserted:
+            new_left.extend(pin_names)
+            inserted = True
+    if not inserted:
+        new_left.extend(pin_names)
+
+    data["modules-left"] = new_left
+    cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def toggle(desktop_id: str) -> None:
+    pins = read_pins()
+    if desktop_id in pins:
+        pins.remove(desktop_id)
+    else:
+        pins.append(desktop_id)
+    write_pins(pins)
+    rt = os.environ.get("PLUME_RUNTIME")
+    if rt and Path(rt).is_dir():
+        apply_to_runtime(Path(rt))
+        os.system("pkill -USR2 -x waybar 2>/dev/null || true")
+
+
+def main() -> None:
+    if len(sys.argv) >= 3 and sys.argv[1] == "toggle":
+        toggle(sys.argv[2])
+    elif len(sys.argv) >= 3 and sys.argv[1] == "apply-runtime":
+        apply_to_runtime(Path(sys.argv[2]))
+
+
+if __name__ == "__main__":
+    main()

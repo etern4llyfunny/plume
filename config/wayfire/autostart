@@ -56,3 +56,6 @@ echo $! >> "$PIDS"
 
 GDK_BACKEND=wayland plume-power --daemon &
 echo $! >> "$PIDS"
+
+GDK_BACKEND=wayland plume-dock &
+echo $! >> "$PIDS"

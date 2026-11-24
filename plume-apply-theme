@@ -103,6 +103,16 @@ window#waybar {{
   color: {p['fg']};
   border-bottom: 1px solid {p['border']};
 }}
+#image {{
+  padding: 4px 6px;
+  margin: 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}}
+#image:hover {{
+  background: {p['bg_hover']};
+  border-color: {p['border_strong']};
+}}
 #image.plume {{
   padding: 4px 8px;
   margin: 4px 4px 4px 8px;
@@ -167,9 +177,16 @@ window#waybar {{
   font-weight: 500;
   color: {p['fg']};
 }}
+#network, #custom-settings, #custom-power {{
+  font-size: 18px;
+  padding: 0 12px;
+  min-width: 32px;
+}}
+#pulseaudio {{
+  font-size: 14px;
+}}
 #custom-power {{
   margin-right: 8px;
-  padding: 0 11px;
   color: {p['fg_dim']};
 }}
 #custom-power:hover {{
@@ -349,16 +366,28 @@ default-timeout=5000
     (d / "config").write_text(cfg, encoding="utf-8")
 
 
+def _wf_rgba(val: str) -> str:
+    s = val.strip()
+    if not s.startswith("#"):
+        return s
+    h = s.lstrip("#")
+    r = int(h[0:2], 16) / 255.0
+    g = int(h[2:4], 16) / 255.0
+    b = int(h[4:6], 16) / 255.0
+    a = int(h[6:8], 16) / 255.0 if len(h) == 8 else 1.0
+    return f"{r:.3f} {g:.3f} {b:.3f} {a:.3f}"
+
+
 def update_wayfire(rt: Path, p: dict[str, str]) -> None:
     wf = rt / "wayfire" / "wayfire.ini"
     if not wf.is_file():
         return
     txt = wf.read_text(encoding="utf-8")
     subs = [
-        (r"^active_color\s*=.*$", f"active_color = {p['wf_active']}"),
-        (r"^inactive_color\s*=.*$", f"inactive_color = {p['wf_inactive']}"),
-        (r"^font_color\s*=.*$", f"font_color = {p['wf_font']}"),
-        (r"^background\s*=.*$", f"background = {p['wf_bg']}"),
+        (r"^active_color\s*=.*$", f"active_color = {_wf_rgba(p['wf_active'])}"),
+        (r"^inactive_color\s*=.*$", f"inactive_color = {_wf_rgba(p['wf_inactive'])}"),
+        (r"^font_color\s*=.*$", f"font_color = {_wf_rgba(p['wf_font'])}"),
+        (r"^background_color\s*=.*$", f"background_color = {_wf_rgba(p['wf_bg'])}"),
     ]
     for pat, repl in subs:
         txt = re.sub(pat, repl, txt, flags=re.MULTILINE)
@@ -397,6 +426,7 @@ def main() -> None:
 
     if not no_reload:
         subprocess.run(["pkill", "-USR2", "-x", "waybar"], check=False)
+        subprocess.run(["pkill", "-USR2", "-x", "plume-dock"], check=False)
         subprocess.run(["makoctl", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
