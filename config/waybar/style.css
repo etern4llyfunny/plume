@@ -30,7 +30,8 @@ window#waybar {
   background: #1c212b;
   color: #edf0f5;
 }
-#workspaces button.active {
+#workspaces button.active,
+#workspaces button.focused {
   background: #2f7fe6;
   color: #ffffff;
 }
@@ -54,14 +55,14 @@ window#waybar {
 #tray > .needs-attention {
   -gtk-icon-effect: highlight;
 }
-#pulseaudio, #clock, #network, #battery, #custom-power {
+#pulseaudio, #clock, #network, #battery, #custom-settings, #custom-power {
   padding: 0 10px;
   margin: 5px 2px;
   color: #cfd5df;
   border: 1px solid transparent;
   border-radius: 6px;
 }
-#pulseaudio:hover, #clock:hover, #network:hover, #battery:hover {
+#pulseaudio:hover, #clock:hover, #network:hover, #battery:hover, #custom-settings:hover {
   background: #1c212b;
   border-color: #2b3342;
   color: #edf0f5;

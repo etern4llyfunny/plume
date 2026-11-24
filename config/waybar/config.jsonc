@@ -3,9 +3,9 @@
   "position": "top",
   "height": 40,
   "spacing": 4,
-  "modules-left": ["image#plume", "ext/workspaces", "wlr/taskbar"],
+  "modules-left": ["image#plume", "wayfire/workspaces", "wlr/taskbar"],
   "modules-center": [],
-  "modules-right": ["tray", "pulseaudio", "clock", "network", "battery", "custom/power"],
+  "modules-right": ["tray", "pulseaudio", "clock", "network", "battery", "custom/settings", "custom/power"],
 
   "image#plume": {
     "path": "/usr/share/plume/assets/plume-logo-clean.svg",
@@ -13,10 +13,10 @@
     "on-click": "plume-launcher",
     "tooltip": false
   },
-  "ext/workspaces": {
-    "format": "{name}",
-    "on-click": "activate",
-    "ignore-hidden": false
+  "wayfire/workspaces": {
+    "format": "{index}",
+    "disable-click": false,
+    "disable-scroll": true
   },
   "wlr/taskbar": {
     "format": "{title:.22}",
@@ -53,6 +53,11 @@
     "format": "{icon}  {capacity}%",
     "format-charging": "󰂄  {capacity}%",
     "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰁹"]
+  },
+  "custom/settings": {
+    "format": "󰒓",
+    "on-click": "plume-settings",
+    "tooltip-format": "Настройки Plume"
   },
   "custom/power": {
     "format": "󰐥",

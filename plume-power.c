@@ -31,7 +31,7 @@ typedef struct {
 } State;
 
 static const char *const CMD_LOCK[]     = { "plume-lock", NULL };
-static const char *const CMD_EXIT[]     = { "labwc", "--exit", NULL };
+static const char *const CMD_EXIT[]     = { "sh", "-c", "kill -TERM \"$(cat \"$PLUME_RUNTIME/wm.pid\")\" 2>/dev/null || pkill -TERM -x wayfire", NULL };
 static const char *const CMD_REBOOT[]   = { "systemctl", "reboot", NULL };
 static const char *const CMD_POWEROFF[] = { "systemctl", "poweroff", NULL };
 

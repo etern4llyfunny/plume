@@ -22,7 +22,8 @@ else
 fi
 
 RT_DIR="${XDG_RUNTIME_DIR:-/tmp}/plume-$$"
-mkdir -p "$RT_DIR/waybar" "$RT_DIR/labwc"
+mkdir -p "$RT_DIR/waybar" "$RT_DIR/wayfire" "$RT_DIR/mako" \
+         "$RT_DIR/share/themes/Plume/gtk-3.0" "$RT_DIR/share/themes/Plume/gtk-4.0"
 
 cleanup() {
   if [ -f "$RT_DIR/pids" ]; then
@@ -34,22 +35,40 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-cp -r "$ROOT/config/labwc/"* "$RT_DIR/labwc/"
-if [ -f "$HOME/.config/plume/keyboard.env" ]; then
-  { cat "$HOME/.config/plume/keyboard.env"; echo "GTK_THEME=Plume"; } > "$RT_DIR/labwc/environment"
-fi
-sed "s|/usr/share/plume|$ROOT|g" "$ROOT/config/waybar/config.jsonc" > "$RT_DIR/waybar/config.jsonc"
-cp "$ROOT/config/waybar/style.css" "$RT_DIR/waybar/style.css"
+XKB_LAYOUT=""
+XKB_OPTIONS=""
+for envf in "$HOME/.config/plume/keyboard.env" "/etc/environment"; do
+  if [ -f "$envf" ]; then
+    [ -z "$XKB_LAYOUT" ] && XKB_LAYOUT="$(sed -n 's/^XKB_DEFAULT_LAYOUT=//p' "$envf" | head -n 1 | tr -d '"'\'' ')"
+    [ -z "$XKB_OPTIONS" ] && XKB_OPTIONS="$(sed -n 's/^XKB_DEFAULT_OPTIONS=//p' "$envf" | head -n 1 | tr -d '"'\'' ')"
+  fi
+done
+[ -n "$XKB_LAYOUT" ] || XKB_LAYOUT="us,ru"
+[ -n "$XKB_OPTIONS" ] || XKB_OPTIONS="grp:alt_shift_toggle"
+
+sed \
+  -e "s|@XKB_LAYOUT@|$XKB_LAYOUT|g" \
+  -e "s|@XKB_OPTIONS@|$XKB_OPTIONS|g" \
+  -e "s|@AUTOSTART@|$ROOT/config/wayfire/autostart|g" \
+  "$ROOT/config/wayfire/wayfire.ini" > "$RT_DIR/wayfire/wayfire.ini"
+
+sed -e "s|/usr/share/plume/assets/plume-logo-clean.svg|$RT_DIR/waybar/plume-logo.svg|g" -e "s|/usr/share/plume|$ROOT|g" "$ROOT/config/waybar/config.jsonc" > "$RT_DIR/waybar/config.jsonc"
 
 export PLUME_ROOT="$ROOT"
 export PLUME_RUNTIME="$RT_DIR"
-export XDG_DATA_DIRS="$ROOT/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export XDG_DATA_DIRS="$RT_DIR/share:$ROOT/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 export XDG_CONFIG_DIRS="$ROOT/config:${XDG_CONFIG_DIRS:-/etc/xdg}"
-export XDG_CURRENT_DESKTOP="Plume:labwc:wlroots"
+export XDG_CURRENT_DESKTOP="Plume:wayfire:wlroots"
 export XDG_SESSION_DESKTOP="Plume"
 export DESKTOP_SESSION="plume"
-unset GDMSESSION GNOME_DESKTOP_SESSION_ID
 export XDG_SESSION_TYPE="wayland"
 export GTK_THEME="Plume"
+export GSK_RENDERER="gl"
+unset GDMSESSION GNOME_DESKTOP_SESSION_ID
 
-labwc -C "$RT_DIR/labwc"
+plume-apply-theme --no-reload
+
+wayfire -c "$RT_DIR/wayfire/wayfire.ini" &
+WM_PID=$!
+echo "$WM_PID" > "$RT_DIR/wm.pid"
+wait "$WM_PID"

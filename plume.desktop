@@ -3,4 +3,4 @@ Name=Plume
 Comment=Лёгкое рабочее окружение Wayland для Ouvert Linux
 Exec=plume-session
 Type=Application
-DesktopNames=Plume;labwc;wlroots
+DesktopNames=Plume;wayfire;wlroots

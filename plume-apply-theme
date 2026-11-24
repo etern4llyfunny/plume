@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+import os
+import re
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+
+def clamp(v: int) -> int:
+    return max(0, min(255, v))
+
+
+def parse_hex(c: str) -> tuple[int, int, int]:
+    c = c.strip().lstrip("#")
+    if len(c) != 6:
+        return (47, 127, 230)
+    try:
+        return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+    except ValueError:
+        return (47, 127, 230)
+
+
+def shift_hex(c: str, delta: int) -> str:
+    r, g, b = parse_hex(c)
+    return f"#{clamp(r + delta):02x}{clamp(g + delta):02x}{clamp(b + delta):02x}"
+
+
+def load_theme() -> tuple[str, str]:
+    mode = "dark"
+    accent = "#2f7fe6"
+    ini = Path.home() / ".config" / "plume" / "theme.ini"
+    if ini.is_file():
+        for line in ini.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if k == "mode" and v in ("dark", "light"):
+                mode = v
+            elif k == "accent" and re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+                accent = v.lower()
+    return mode, accent
+
+
+def palette(mode: str, accent: str) -> dict[str, str]:
+    acc_hover = shift_hex(accent, 18 if mode == "dark" else -16)
+    if mode == "light":
+        return {
+            "mode": "light",
+            "bg": "#f3f5f9",
+            "bg_alt": "#e8ecf3",
+            "bg_hover": "#dce2ec",
+            "border": "#cdd5e2",
+            "border_strong": "#b8c3d4",
+            "fg": "#171c26",
+            "fg_dim": "#434d5e",
+            "muted": "#667185",
+            "accent": accent,
+            "accent_hover": acc_hover,
+            "wf_active": "#e8ecf3ff",
+            "wf_inactive": "#dce2ecff",
+            "wf_font": "#171c26ff",
+            "wf_bg": "#e8ecf3ff",
+            "gtk3_base": "resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained.css",
+            "gtk4_base": "resource:///org/gtk/libgtk/theme/Default/Default-light.css",
+            "power_hover_bg": "#f8d8d5",
+        }
+    return {
+        "mode": "dark",
+        "bg": "#171a21",
+        "bg_alt": "#13161c",
+        "bg_hover": "#1c212b",
+        "border": "#252b37",
+        "border_strong": "#2b3342",
+        "fg": "#edf0f5",
+        "fg_dim": "#cfd5df",
+        "muted": "#8b96a8",
+        "accent": accent,
+        "accent_hover": acc_hover,
+        "wf_active": "#171a21ff",
+        "wf_inactive": "#13161cff",
+        "wf_font": "#edf0f5ff",
+        "wf_bg": "#13161cff",
+        "gtk3_base": "resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained-dark.css",
+        "gtk4_base": "resource:///org/gtk/libgtk/theme/Default/Default-dark.css",
+        "power_hover_bg": "#2a1b1e",
+    }
+
+
+def write_waybar_css(rt: Path, p: dict[str, str]) -> None:
+    d = rt / "waybar"
+    d.mkdir(parents=True, exist_ok=True)
+    css = f"""* {{
+  font-family: "Onest", "Sora", "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
+  font-size: 13px;
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+}}
+window#waybar {{
+  background: {p['bg_alt']};
+  color: {p['fg']};
+  border-bottom: 1px solid {p['border']};
+}}
+#image.plume {{
+  padding: 4px 8px;
+  margin: 4px 4px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}}
+#image.plume:hover {{
+  background: {p['bg_hover']};
+  border-color: {p['accent']};
+}}
+#workspaces button {{
+  color: {p['muted']};
+  padding: 0 10px;
+  margin: 5px 2px;
+  border-radius: 6px;
+}}
+#workspaces button:hover {{
+  background: {p['bg_hover']};
+  color: {p['fg']};
+}}
+#workspaces button.active,
+#workspaces button.focused {{
+  background: {p['accent']};
+  color: #ffffff;
+}}
+#taskbar button {{
+  color: {p['fg_dim']};
+  padding: 0 10px;
+  margin: 5px 2px;
+  border-radius: 6px;
+}}
+#taskbar button.active {{
+  background: {p['bg_hover']};
+  border: 1px solid {p['border_strong']};
+}}
+#tray {{
+  padding: 0 8px;
+  margin: 5px 2px;
+}}
+#tray > .passive {{
+  -gtk-icon-effect: dim;
+}}
+#tray > .needs-attention {{
+  -gtk-icon-effect: highlight;
+}}
+#pulseaudio, #clock, #network, #battery, #custom-settings, #custom-power {{
+  padding: 0 10px;
+  margin: 5px 2px;
+  color: {p['fg_dim']};
+  border: 1px solid transparent;
+  border-radius: 6px;
+}}
+#pulseaudio:hover, #clock:hover, #network:hover, #battery:hover, #custom-settings:hover {{
+  background: {p['bg_hover']};
+  border-color: {p['border_strong']};
+  color: {p['fg']};
+}}
+#pulseaudio.muted {{
+  color: {p['muted']};
+}}
+#clock {{
+  font-weight: 500;
+  color: {p['fg']};
+}}
+#custom-power {{
+  margin-right: 8px;
+  padding: 0 11px;
+  color: {p['fg_dim']};
+}}
+#custom-power:hover {{
+  background: {p['power_hover_bg']};
+  border-color: #e04f3e;
+  color: #e04f3e;
+}}
+"""
+    (d / "style.css").write_text(css, encoding="utf-8")
+
+
+def write_gtk_themes(rt: Path, p: dict[str, str]) -> None:
+    tdir = rt / "share" / "themes" / "Plume"
+    (tdir / "gtk-3.0").mkdir(parents=True, exist_ok=True)
+    (tdir / "gtk-4.0").mkdir(parents=True, exist_ok=True)
+
+    gtk3 = f"""@import url("{p['gtk3_base']}");
+
+@define-color theme_bg_color {p['bg']};
+@define-color theme_base_color {p['bg']};
+@define-color theme_fg_color {p['fg']};
+@define-color theme_text_color {p['fg']};
+@define-color theme_selected_bg_color {p['accent']};
+@define-color theme_selected_fg_color #ffffff;
+@define-color borders {p['border']};
+@define-color insensitive_bg_color {p['bg_alt']};
+@define-color insensitive_fg_color {p['muted']};
+
+* {{
+  font-family: "Onest", "Sora", sans-serif;
+}}
+window, .background {{
+  background-color: {p['bg']};
+  color: {p['fg']};
+}}
+menubar, toolbar, headerbar, .titlebar {{
+  background-color: {p['bg_alt']};
+  background-image: none;
+  color: {p['fg']};
+  border-color: {p['border']};
+  box-shadow: none;
+}}
+.thunar .sidebar, .thunar .sidebar .view, .thunar treeview.sidebar {{
+  background-color: {p['bg_alt']};
+  color: {p['fg_dim']};
+}}
+.thunar .standard-view .view, .thunar treeview.view, .thunar iconview.view {{
+  background-color: {p['bg']};
+  color: {p['fg']};
+}}
+.thunar treeview.view:selected:focus, .thunar .sidebar .view:selected:focus {{
+  background-color: {p['accent']};
+  color: #ffffff;
+}}
+entry {{
+  background-color: {p['bg_hover']};
+  color: {p['fg']};
+  border: 1px solid {p['border_strong']};
+  border-radius: 6px;
+  box-shadow: none;
+}}
+entry:focus {{
+  border-color: {p['accent']};
+}}
+button {{
+  background-image: none;
+  background-color: {p['bg_hover']};
+  color: {p['fg']};
+  border: 1px solid {p['border_strong']};
+  border-radius: 6px;
+  box-shadow: none;
+}}
+button:hover {{
+  border-color: {p['accent']};
+}}
+notebook > header {{
+  background-color: {p['bg_alt']};
+  border-color: {p['border']};
+}}
+notebook > header tab:checked {{
+  background-color: {p['bg']};
+  color: {p['fg']};
+  box-shadow: inset 0 -2px {p['accent']};
+}}
+menu, .menu {{
+  background-color: {p['bg']};
+  color: {p['fg']};
+  border: 1px solid {p['border_strong']};
+}}
+menu menuitem:hover, .menu menuitem:hover {{
+  background-color: {p['accent']};
+  color: #ffffff;
+}}
+"""
+    (tdir / "gtk-3.0" / "gtk.css").write_text(gtk3, encoding="utf-8")
+
+    gtk4 = f"""@import url("{p['gtk4_base']}");
+
+@define-color window_bg_color {p['bg']};
+@define-color window_fg_color {p['fg']};
+@define-color view_bg_color {p['bg_alt']};
+@define-color view_fg_color {p['fg']};
+@define-color headerbar_bg_color {p['bg_alt']};
+@define-color headerbar_fg_color {p['fg']};
+@define-color headerbar_border_color {p['border']};
+@define-color card_bg_color {p['bg_alt']};
+@define-color card_fg_color {p['fg']};
+@define-color popover_bg_color {p['bg']};
+@define-color popover_fg_color {p['fg']};
+@define-color dialog_bg_color {p['bg']};
+@define-color dialog_fg_color {p['fg']};
+@define-color accent_bg_color {p['accent']};
+@define-color accent_fg_color #ffffff;
+@define-color accent_color {p['accent']};
+
+* {{
+  font-family: "Onest", "Sora", sans-serif;
+}}
+window, window.background {{
+  background-color: {p['bg']};
+  color: {p['fg']};
+}}
+headerbar, .titlebar {{
+  background-color: {p['bg_alt']};
+  background-image: none;
+  color: {p['fg']};
+  border-bottom: 1px solid {p['border']};
+  box-shadow: none;
+}}
+notebook > header {{
+  background-color: {p['bg_alt']};
+  border-color: {p['border']};
+}}
+notebook > stack {{
+  background-color: {p['bg']};
+}}
+popover > contents {{
+  background-color: {p['bg']};
+  color: {p['fg']};
+  border: 1px solid {p['border_strong']};
+}}
+button {{
+  background-image: none;
+  background-color: {p['bg_hover']};
+  color: {p['fg']};
+  border: 1px solid {p['border_strong']};
+  box-shadow: none;
+}}
+button:hover {{
+  border-color: {p['accent']};
+}}
+entry {{
+  background-color: {p['bg_alt']};
+  color: {p['fg']};
+  border: 1px solid {p['border_strong']};
+}}
+entry:focus-within {{
+  border-color: {p['accent']};
+}}
+"""
+    (tdir / "gtk-4.0" / "gtk.css").write_text(gtk4, encoding="utf-8")
+
+
+def write_mako(rt: Path, p: dict[str, str]) -> None:
+    d = rt / "mako"
+    d.mkdir(parents=True, exist_ok=True)
+    cfg = f"""font=Onest 10
+background-color={p['bg']}
+text-color={p['fg']}
+border-color={p['accent']}
+border-size=1
+border-radius=8
+padding=12
+margin=10
+default-timeout=5000
+"""
+    (d / "config").write_text(cfg, encoding="utf-8")
+
+
+def update_wayfire(rt: Path, p: dict[str, str]) -> None:
+    wf = rt / "wayfire" / "wayfire.ini"
+    if not wf.is_file():
+        return
+    txt = wf.read_text(encoding="utf-8")
+    subs = [
+        (r"^active_color\s*=.*$", f"active_color = {p['wf_active']}"),
+        (r"^inactive_color\s*=.*$", f"inactive_color = {p['wf_inactive']}"),
+        (r"^font_color\s*=.*$", f"font_color = {p['wf_font']}"),
+        (r"^background\s*=.*$", f"background = {p['wf_bg']}"),
+    ]
+    for pat, repl in subs:
+        txt = re.sub(pat, repl, txt, flags=re.MULTILINE)
+    wf.write_text(txt, encoding="utf-8")
+
+
+
+def write_logo(rt: Path, mode: str) -> None:
+    root = Path(os.environ.get("PLUME_ROOT") or "/usr/share/plume")
+    src = root / "assets" / "plume-logo-clean.svg"
+    if not src.is_file():
+        return
+    svg = src.read_text(encoding="utf-8")
+    if mode == "light":
+        svg = re.sub(r"#[0-9a-fA-F]{6}\b", "#1c212b", svg)
+        svg = re.sub(r"#[0-9a-fA-F]{3}\b", "#1c212b", svg)
+    d = rt / "waybar"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "plume-logo.svg").write_text(svg, encoding="utf-8")
+
+
+def main() -> None:
+    no_reload = "--no-reload" in sys.argv
+    rt_env = os.environ.get("PLUME_RUNTIME")
+    if not rt_env:
+        return
+    rt = Path(rt_env)
+    mode, accent = load_theme()
+    p = palette(mode, accent)
+
+    write_logo(rt, mode)
+    write_waybar_css(rt, p)
+    write_gtk_themes(rt, p)
+    write_mako(rt, p)
+    update_wayfire(rt, p)
+
+    if not no_reload:
+        subprocess.run(["pkill", "-USR2", "-x", "waybar"], check=False)
+        subprocess.run(["makoctl", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+if __name__ == "__main__":
+    main()
