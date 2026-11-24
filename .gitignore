@@ -2,5 +2,3 @@ plume-dock
 plume-launcher
 plume-power
 plume-settings
-wlr-foreign-toplevel-unstable-v1-client-protocol.h
-wlr-foreign-toplevel-unstable-v1-protocol.c
