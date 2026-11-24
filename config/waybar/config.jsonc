@@ -5,12 +5,12 @@
   "spacing": 4,
   "modules-left": ["image#plume", "ext/workspaces", "wlr/taskbar"],
   "modules-center": [],
-  "modules-right": ["pulseaudio", "clock", "network", "battery", "custom/power"],
+  "modules-right": ["tray", "pulseaudio", "clock", "network", "battery", "custom/power"],
 
   "image#plume": {
-    "path": "/home/admin/plume/assets/plume-logo-clean.svg",
+    "path": "/usr/share/plume/assets/plume-logo-clean.svg",
     "size": 22,
-    "on-click": "/home/admin/plume/plume-launcher",
+    "on-click": "plume-launcher",
     "tooltip": false
   },
   "ext/workspaces": {
@@ -23,11 +23,16 @@
     "on-click": "activate",
     "tooltip": false
   },
+  "tray": {
+    "icon-size": 16,
+    "spacing": 8
+  },
   "pulseaudio": {
     "format": "{icon}  {volume}%",
     "format-muted": "󰖁",
     "format-icons": ["󰕿", "󰖀", "󰕾"],
     "on-click": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+    "on-click-right": "pavucontrol",
     "scroll-step": 5,
     "tooltip-format": "{desc} ({volume}%)"
   },
@@ -39,6 +44,7 @@
     "format-wifi": "󰤨",
     "format-ethernet": "󰈀",
     "format-disconnected": "󰤭",
+    "on-click": "nm-connection-editor",
     "tooltip-format": "{ifname}: {ipaddr}",
     "tooltip-format-wifi": "{essid} ({signalStrength}%)",
     "tooltip-format-disconnected": "Нет подключения"
@@ -50,7 +56,7 @@
   },
   "custom/power": {
     "format": "󰐥",
-    "on-click": "/home/admin/plume/plume-power",
+    "on-click": "plume-power",
     "tooltip": false
   }
 }

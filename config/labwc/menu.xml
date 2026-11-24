@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu>
+  <menu id="root-menu" label="Plume">
+    <item label="Приложения">
+      <action name="Execute" command="plume-launcher" />
+    </item>
+    <item label="Терминал">
+      <action name="Execute" command="kitty" />
+    </item>
+    <item label="Файлы">
+      <action name="Execute" command="thunar" />
+    </item>
+    <separator />
+    <item label="Заблокировать">
+      <action name="Execute" command="plume-lock" />
+    </item>
+    <item label="Выйти из Plume">
+      <action name="Execute" command="labwc --exit" />
+    </item>
+  </menu>
+</openbox_menu>

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec swaylock -f   -c 13161c   --indicator-idle-visible   --indicator-radius 58   --indicator-thickness 5   --show-failed-attempts   --inside-color 171a21   --inside-clear-color 1c212b   --inside-ver-color 171a21   --inside-wrong-color 2a1b1e   --ring-color 2f7fe6   --ring-clear-color 5aa0f5   --ring-ver-color 2f7fe6   --ring-wrong-color e04f3e   --key-hl-color 5aa0f5   --bs-hl-color e04f3e   --text-color edf0f5   --text-clear-color edf0f5   --text-ver-color edf0f5   --text-wrong-color edf0f5   --line-color 00000000   --separator-color 00000000

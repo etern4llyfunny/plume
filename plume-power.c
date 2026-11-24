@@ -19,7 +19,7 @@ typedef struct {
     GtkApplication *app;
     GtkWidget *win;
     GtkWidget *card;
-    PowerAction actions[3];
+    PowerAction actions[4];
     int armed_idx;
     gboolean daemon_mode;
     gboolean open;
@@ -30,6 +30,7 @@ typedef struct {
     gint64 last_hide_us;
 } State;
 
+static const char *const CMD_LOCK[]     = { "plume-lock", NULL };
 static const char *const CMD_EXIT[]     = { "labwc", "--exit", NULL };
 static const char *const CMD_REBOOT[]   = { "systemctl", "reboot", NULL };
 static const char *const CMD_POWEROFF[] = { "systemctl", "poweroff", NULL };
@@ -56,7 +57,7 @@ static void write_pid(const char *pid_path) {
 }
 
 static void reset_armed(State *st) {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         gtk_button_set_label(GTK_BUTTON(st->actions[i].btn), st->actions[i].label);
         gtk_widget_remove_css_class(st->actions[i].btn, "armed");
     }
@@ -259,11 +260,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_margin_end(inner, 8);
     gtk_box_append(GTK_BOX(st->card), inner);
 
-    st->actions[0] = (PowerAction){ NULL, "󰍃   Выйти из Plume", NULL, CMD_EXIT };
-    st->actions[1] = (PowerAction){ NULL, "󰜉   Перезагрузить", "Точно перезагрузить?", CMD_REBOOT };
-    st->actions[2] = (PowerAction){ NULL, "󰐥   Выключить", "Точно выключить?", CMD_POWEROFF };
+    st->actions[0] = (PowerAction){ NULL, "󰌾   Заблокировать", NULL, CMD_LOCK };
+    st->actions[1] = (PowerAction){ NULL, "󰍃   Выйти из Plume", NULL, CMD_EXIT };
+    st->actions[2] = (PowerAction){ NULL, "󰜉   Перезагрузить", "Точно перезагрузить?", CMD_REBOOT };
+    st->actions[3] = (PowerAction){ NULL, "󰐥   Выключить", "Точно выключить?", CMD_POWEROFF };
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         GtkWidget *btn = gtk_button_new_with_label(st->actions[i].label);
         gtk_widget_add_css_class(btn, "plume-power-btn");
         gtk_widget_set_halign(btn, GTK_ALIGN_FILL);

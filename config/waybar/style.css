@@ -44,6 +44,16 @@ window#waybar {
   background: #1c212b;
   border: 1px solid #2b3342;
 }
+#tray {
+  padding: 0 8px;
+  margin: 5px 2px;
+}
+#tray > .passive {
+  -gtk-icon-effect: dim;
+}
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+}
 #pulseaudio, #clock, #network, #battery, #custom-power {
   padding: 0 10px;
   margin: 5px 2px;

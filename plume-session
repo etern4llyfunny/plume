@@ -1,0 +1,52 @@
+#!/bin/sh
+set -e
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+if [ -n "${PLUME_ROOT:-}" ] && [ -d "$PLUME_ROOT/config" ]; then
+  ROOT="$PLUME_ROOT"
+elif [ -d "/usr/share/plume/config" ]; then
+  ROOT="/usr/share/plume"
+else
+  ROOT="$SELF_DIR"
+fi
+
+if [ -x "$SELF_DIR/plume-launcher" ]; then
+  export PATH="$SELF_DIR:$PATH"
+fi
+
+if [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; then
+  export PLUME_NESTED=1
+else
+  export PLUME_NESTED=0
+fi
+
+RT_DIR="${XDG_RUNTIME_DIR:-/tmp}/plume-$$"
+mkdir -p "$RT_DIR/waybar" "$RT_DIR/labwc"
+
+cleanup() {
+  if [ -f "$RT_DIR/pids" ]; then
+    while read -r pid; do
+      kill "$pid" 2>/dev/null || true
+    done < "$RT_DIR/pids"
+  fi
+  rm -rf "$RT_DIR"
+}
+trap cleanup EXIT INT TERM
+
+cp -r "$ROOT/config/labwc/"* "$RT_DIR/labwc/"
+sed "s|/usr/share/plume|$ROOT|g" "$ROOT/config/waybar/config.jsonc" > "$RT_DIR/waybar/config.jsonc"
+cp "$ROOT/config/waybar/style.css" "$RT_DIR/waybar/style.css"
+
+export PLUME_ROOT="$ROOT"
+export PLUME_RUNTIME="$RT_DIR"
+export XDG_DATA_DIRS="$ROOT/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export XDG_CONFIG_DIRS="$ROOT/config:${XDG_CONFIG_DIRS:-/etc/xdg}"
+export XDG_CURRENT_DESKTOP="Plume:labwc:wlroots"
+export XDG_SESSION_DESKTOP="Plume"
+export DESKTOP_SESSION="plume"
+unset GDMSESSION GNOME_DESKTOP_SESSION_ID
+export XDG_SESSION_TYPE="wayland"
+export GTK_THEME="Plume"
+
+labwc -C "$RT_DIR/labwc"
