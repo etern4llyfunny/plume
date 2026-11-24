@@ -10,6 +10,9 @@
     <item label="Файлы">
       <action name="Execute" command="thunar" />
     </item>
+    <item label="Настройки Plume">
+      <action name="Execute" command="plume-settings" />
+    </item>
     <separator />
     <item label="Заблокировать">
       <action name="Execute" command="plume-lock" />

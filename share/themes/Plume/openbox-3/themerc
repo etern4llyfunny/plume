@@ -12,3 +12,14 @@ window.inactive.label.text.color: #7c8798
 window.active.button.unpressed.image.color: #a4aebd
 window.inactive.button.unpressed.image.color: #5b6577
 window.label.text.justify: left
+
+menu.width.min: 180
+menu.border.width: 1
+menu.border.color: #2b3342
+menu.separator.color: #252b37
+menu.items.bg: flat solid
+menu.items.bg.color: #171a21
+menu.items.text.color: #edf0f5
+menu.items.active.bg: flat solid
+menu.items.active.bg.color: #2f7fe6
+menu.items.active.text.color: #ffffff

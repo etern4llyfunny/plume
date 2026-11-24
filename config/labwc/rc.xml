@@ -34,6 +34,9 @@
     <keybind key="W-d">
       <action name="Execute" command="plume-launcher" />
     </keybind>
+    <keybind key="W-i">
+      <action name="Execute" command="plume-settings" />
+    </keybind>
     <keybind key="W-l">
       <action name="Execute" command="plume-lock" />
     </keybind>

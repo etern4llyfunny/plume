@@ -1,0 +1,75 @@
+@import url("resource:///org/gtk/libgtk/theme/Default/Default-dark.css");
+
+@define-color window_bg_color #171a21;
+@define-color window_fg_color #edf0f5;
+@define-color view_bg_color #13161c;
+@define-color view_fg_color #edf0f5;
+@define-color headerbar_bg_color #13161c;
+@define-color headerbar_fg_color #edf0f5;
+@define-color headerbar_border_color #252b37;
+@define-color card_bg_color #13161c;
+@define-color card_fg_color #edf0f5;
+@define-color popover_bg_color #171a21;
+@define-color popover_fg_color #edf0f5;
+@define-color dialog_bg_color #171a21;
+@define-color dialog_fg_color #edf0f5;
+@define-color accent_bg_color #2f7fe6;
+@define-color accent_fg_color #ffffff;
+@define-color accent_color #5aa0f5;
+
+* {
+  font-family: "Onest", "Sora", sans-serif;
+}
+
+window,
+window.background {
+  background-color: #171a21;
+  color: #edf0f5;
+}
+
+headerbar,
+.titlebar {
+  background-color: #13161c;
+  background-image: none;
+  color: #edf0f5;
+  border-bottom: 1px solid #252b37;
+  box-shadow: none;
+}
+
+notebook > header {
+  background-color: #13161c;
+  border-color: #252b37;
+}
+
+notebook > stack {
+  background-color: #171a21;
+}
+
+popover > contents {
+  background-color: #171a21;
+  color: #edf0f5;
+  border: 1px solid #2b3342;
+}
+
+button {
+  background-image: none;
+  background-color: #1c212b;
+  color: #edf0f5;
+  border: 1px solid #2b3342;
+  box-shadow: none;
+}
+
+button:hover {
+  background-color: #252b37;
+  border-color: #2f7fe6;
+}
+
+entry {
+  background-color: #13161c;
+  color: #edf0f5;
+  border: 1px solid #2b3342;
+}
+
+entry:focus-within {
+  border-color: #2f7fe6;
+}

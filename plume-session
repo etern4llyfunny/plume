@@ -35,6 +35,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cp -r "$ROOT/config/labwc/"* "$RT_DIR/labwc/"
+if [ -f "$HOME/.config/plume/keyboard.env" ]; then
+  { cat "$HOME/.config/plume/keyboard.env"; echo "GTK_THEME=Plume"; } > "$RT_DIR/labwc/environment"
+fi
 sed "s|/usr/share/plume|$ROOT|g" "$ROOT/config/waybar/config.jsonc" > "$RT_DIR/waybar/config.jsonc"
 cp "$ROOT/config/waybar/style.css" "$RT_DIR/waybar/style.css"
 

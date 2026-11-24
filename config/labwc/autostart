@@ -7,13 +7,18 @@ if [ "${PLUME_NESTED:-0}" != "1" ] && command -v dbus-update-activation-environm
   dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE GTK_THEME 2>/dev/null || true
 fi
 
+USER_WALL=""
+if [ -f "$HOME/.config/plume/wallpaper" ]; then
+  USER_WALL="$(cat "$HOME/.config/plume/wallpaper" 2>/dev/null || true)"
+fi
 WALL=""
 for candidate in \
+  "$USER_WALL" \
   "$ROOT/assets/wallpaper.png" \
   "/usr/share/backgrounds/ouvert-walp.png" \
   "/usr/share/pixmaps/ouvert-walp.png" \
   "$HOME/pzhavos/pkgbuilds/ouvert-branding/ouvert-walp.png"; do
-  if [ -f "$candidate" ]; then
+  if [ -n "$candidate" ] && [ -f "$candidate" ]; then
     WALL="$candidate"
     break
   fi

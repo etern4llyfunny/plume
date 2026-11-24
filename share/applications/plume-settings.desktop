@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Настройки Plume
+Comment=Обои, клавиатура и параметры рабочего окружения Plume
+Exec=plume-settings
+Icon=preferences-system
+Categories=Settings;System;
