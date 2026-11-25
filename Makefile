@@ -8,6 +8,8 @@ SCRIPTS = plume-session plume-apply-theme plume-lock plume-screenshot plume-pinn
 
 all: $(BINS)
 
+.PHONY: all install clean
+
 plume-launcher: plume-launcher.c
 	gcc $(CFLAGS) $< -o $@ $(LIBS)
 
@@ -28,6 +30,7 @@ install: all
 	install -dm755 $(DESTDIR)$(PREFIX)/share/themes
 	cp -r share/themes/* $(DESTDIR)$(PREFIX)/share/themes/
 	install -Dm644 plume.desktop $(DESTDIR)$(PREFIX)/share/wayland-sessions/plume.desktop
+	install -Dm644 share/applications/plume-settings.desktop $(DESTDIR)$(PREFIX)/share/applications/plume-settings.desktop
 
 clean:
 	rm -f $(BINS)

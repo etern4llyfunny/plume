@@ -11,6 +11,9 @@
 
 typedef struct {
     GtkApplication *app;
+    GtkCssProvider *accent_css;
+    GFileMonitor *theme_monitor;
+    guint theme_timer;
     GtkWidget *win;
     GtkWidget *card;
     GtkWidget *entry;
@@ -100,7 +103,75 @@ static gboolean finish_hide_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
+/* Refresh on every opening: the launcher daemon survives theme changes. */
+static void refresh_accent(State *st) {
+    char accent[8] = "#2f7fe6";
+    char *path = g_build_filename(g_get_user_config_dir(), "plume", "theme.ini", NULL);
+    char *content = NULL;
+    if (g_file_get_contents(path, &content, NULL, NULL)) {
+        char **lines = g_strsplit(content, "\n", -1);
+        for (guint i = 0; lines[i]; i++) {
+            char *line = g_strstrip(lines[i]);
+            char *eq = strchr(line, '=');
+            if (!eq) continue;
+            *eq = '\0';
+            if (strcmp(g_strstrip(line), "accent") != 0) continue;
+            char *value = g_strstrip(eq + 1);
+            gboolean valid = strlen(value) == 7 && value[0] == '#';
+            for (guint j = 1; valid && j < 7; j++)
+                valid = g_ascii_isxdigit(value[j]);
+            if (valid) g_strlcpy(accent, value, sizeof accent);
+        }
+        g_strfreev(lines);
+    }
+    g_free(content);
+    g_free(path);
+    char *css = g_strdup_printf("@define-color plume_launcher_accent %s;", accent);
+    gtk_css_provider_load_from_string(st->accent_css, css);
+    g_free(css);
+}
+
+static gboolean refresh_accent_cb(gpointer user_data) {
+    State *st = user_data;
+    st->theme_timer = 0;
+    refresh_accent(st);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_theme_changed(GFileMonitor *monitor, GFile *file,
+                             GFile *other_file, GFileMonitorEvent event,
+                             gpointer user_data) {
+    (void)monitor;
+    (void)event;
+    State *st = user_data;
+    char *name = file ? g_file_get_basename(file) : NULL;
+    char *other_name = other_file ? g_file_get_basename(other_file) : NULL;
+    gboolean relevant = g_strcmp0(name, "theme.ini") == 0 ||
+                        g_strcmp0(other_name, "theme.ini") == 0;
+    g_free(name);
+    g_free(other_name);
+    if (!relevant) return;
+    /* Coalesce writes and atomic replacements before reading the new file. */
+    if (st->theme_timer) g_source_remove(st->theme_timer);
+    st->theme_timer = g_timeout_add(80, refresh_accent_cb, st);
+}
+
+static void watch_theme(State *st) {
+    char *dir = g_build_filename(g_get_user_config_dir(), "plume", NULL);
+    if (g_mkdir_with_parents(dir, 0700) == 0) {
+        GFile *file = g_file_new_for_path(dir);
+        st->theme_monitor = g_file_monitor_directory(
+            file, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
+        if (st->theme_monitor)
+            g_signal_connect(st->theme_monitor, "changed",
+                             G_CALLBACK(on_theme_changed), st);
+        g_object_unref(file);
+    }
+    g_free(dir);
+}
+
 static void show_launcher(State *st) {
+    refresh_accent(st);
     if (st->hide_timer) {
         g_source_remove(st->hide_timer);
         st->hide_timer = 0;
@@ -268,6 +339,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         g_application_hold(G_APPLICATION(app));
     }
 
+    st->accent_css = gtk_css_provider_new();
+    refresh_accent(st);
+    watch_theme(st);
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(), GTK_STYLE_PROVIDER(st->accent_css),
+        GTK_STYLE_PROVIDER_PRIORITY_USER);
+
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
         "window.plume-win, window.background.plume-win {"
@@ -278,7 +356,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "box.plume-card {"
         "  background-color: #171a21;"
         "  color: #edf0f5;"
-        "  border: 1px solid #2f7fe6;"
+        "  border: 1px solid @plume_launcher_accent;"
         "  border-radius: 6px;"
         "  font-family: 'Onest', 'Sora', sans-serif;"
         "  font-size: 13px;"
@@ -298,10 +376,14 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "  border-radius: 6px;"
         "  padding: 8px 10px;"
         "  min-height: 20px;"
+        "  box-shadow: none; outline: none;"
         "}"
-        "entry.plume-search:focus {"
-        "  border-color: #2f7fe6;"
-        "  outline: none;"
+        "entry.plume-search:focus, entry.plume-search:focus-within {"
+        "  border-color: @plume_launcher_accent;"
+        "  outline: none; box-shadow: none;"
+        "}"
+        "entry.plume-search text, entry.plume-search text:focus {"
+        "  outline: none; box-shadow: none;"
         "}"
         "list.plume-list {"
         "  background: transparent;"
@@ -314,7 +396,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "list.plume-list row:hover {"
         "  background: #202633;"
         "}"
-        "button.plume-pin {""  background: transparent; border: none; color: #8b96a8; padding: 2px 6px; min-height: 20px; border-radius: 4px; box-shadow: none;""}""button.plume-pin:hover, button.plume-pin.pinned {""  color: #5aa0f5; background: #252b37;""}""list.plume-list row:selected {"
+        "button.plume-pin {""  background: transparent; border: none; color: #8b96a8; padding: 2px 6px; min-height: 20px; border-radius: 4px; box-shadow: none;""}""button.plume-pin:hover, button.plume-pin.pinned {""  color: @plume_launcher_accent; background: #252b37;""}""list.plume-list row:selected {"
         "  background: #252b37;"
         "  color: #ffffff;"
         "}"
@@ -450,6 +532,14 @@ int main(int argc, char **argv) {
     GtkApplication *app = gtk_application_new(NULL, G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), &st);
     int status = g_application_run(G_APPLICATION(app), 1, argv);
+    if (st.theme_timer) g_source_remove(st.theme_timer);
+    if (st.theme_monitor) g_file_monitor_cancel(st.theme_monitor);
+    g_clear_object(&st.theme_monitor);
+    if (st.accent_css) {
+        gtk_style_context_remove_provider_for_display(
+            gdk_display_get_default(), GTK_STYLE_PROVIDER(st.accent_css));
+        g_clear_object(&st.accent_css);
+    }
     g_object_unref(app);
     unlink(pid_path);
     g_free(pid_path);
