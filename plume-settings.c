@@ -129,6 +129,16 @@ typedef struct {
     GtkWidget *default_app_labels[4];
     GtkWidget *autostart_status_label;
     GtkWidget *autostart_list;
+
+    /* Уведомления */
+    GtkWidget *notifications_dnd_switch;
+    GtkWidget *notifications_status_label;
+    gboolean notifications_loading;
+
+    /* Поиск */
+    GtkWidget *search_descriptions_switch;
+    GtkWidget *search_commands_switch;
+    gboolean search_loading;
 } State;
 
 static char *get_plume_root(void) {
@@ -299,6 +309,25 @@ static void apply_window_css(State *st) {
         bg, border,
         bg_hover, fg, border_s, st->accent,
         bg, border_s, fg, fg, fg, st->accent
+    );
+
+    g_string_append_printf(css,
+        "window.plume-settings-win switch {"
+        "  min-width: 40px; min-height: 20px; padding: 1px;"
+        "  background-color: %s; background-image: none;"
+        "  border: 1px solid %s; border-radius: 5px; box-shadow: none;"
+        "}"
+        "window.plume-settings-win switch:checked {"
+        "  background-color: %s; background-image: none; border-color: %s;"
+        "}"
+        "window.plume-settings-win switch slider {"
+        "  min-width: 16px; min-height: 16px; margin: 1px;"
+        "  background-color: %s; background-image: none;"
+        "  border: 0; border-radius: 3px; box-shadow: none;"
+        "}"
+        "window.plume-settings-win switch:disabled { opacity: 0.45; }"
+        ".ps-source-fixed { color: %s; font-size: 12px; font-weight: 600; }",
+        bg_hover, border_s, st->accent, st->accent, fg, st->accent
     );
 
     for (int i = 0; i < N_ACCENTS; i++) {
@@ -2043,6 +2072,140 @@ static void on_add_command(GtkButton *button, gpointer user_data) {
     gtk_window_present(GTK_WINDOW(dialog));
 }
 
+static void ensure_dnd_mode_config(void) {
+    const char *runtime = getenv("PLUME_RUNTIME");
+    if (!runtime || !*runtime) return;
+    char *path = g_build_filename(runtime, "mako", "config", NULL);
+    char *content = NULL;
+    if (g_file_get_contents(path, &content, NULL, NULL) &&
+        !strstr(content, "[mode=do-not-disturb]")) {
+        char *updated = g_strconcat(content,
+            "\n[mode=do-not-disturb]\ninvisible=1\n", NULL);
+        g_file_set_contents(path, updated, -1, NULL);
+        g_free(updated);
+    }
+    g_free(content);
+    g_free(path);
+    char *argv[] = { "makoctl", "reload", NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+}
+
+static void refresh_notifications(State *st) {
+    char *argv[] = { "makoctl", "mode", NULL };
+    char *output = run_command_capture(argv);
+    gboolean dnd = strstr(output, "do-not-disturb") != NULL;
+    st->notifications_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->notifications_dnd_switch), dnd);
+    st->notifications_loading = FALSE;
+    gtk_label_set_text(GTK_LABEL(st->notifications_status_label),
+        dnd ? "Уведомления временно скрыты" : "Уведомления показываются");
+    g_free(output);
+}
+
+static gboolean on_notifications_dnd_changed(GtkSwitch *widget,
+    gboolean state, gpointer user_data) {
+    (void)widget;
+    State *st = user_data;
+    if (st->notifications_loading) return FALSE;
+    ensure_dnd_mode_config();
+    char *argv[] = {
+        "makoctl", "mode", state ? "-a" : "-r", "do-not-disturb", NULL
+    };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    refresh_notifications(st);
+    return TRUE;
+}
+
+static void on_notifications_test(GtkButton *button, gpointer user_data) {
+    (void)button;
+    (void)user_data;
+    char *argv[] = {
+        "notify-send", "Plume", "Тестовое уведомление работает", NULL
+    };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+}
+
+static void on_notifications_dismiss(GtkButton *button, gpointer user_data) {
+    (void)button;
+    (void)user_data;
+    char *argv[] = { "makoctl", "dismiss", "-a", NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+}
+
+static void on_notifications_restore(GtkButton *button, gpointer user_data) {
+    (void)button;
+    (void)user_data;
+    char *argv[] = { "makoctl", "restore", NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+}
+
+static char *get_search_prefs_path(void) {
+    char *dir = get_config_dir();
+    char *path = g_build_filename(dir, "search.ini", NULL);
+    g_free(dir);
+    return path;
+}
+
+static void load_search_prefs(gboolean *descriptions, gboolean *commands) {
+    *descriptions = TRUE;
+    *commands = FALSE;
+    char *path = get_search_prefs_path();
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+        gboolean value = g_key_file_get_boolean(
+            key, "Search", "descriptions", &error);
+        if (!error) *descriptions = value;
+        g_clear_error(&error);
+        value = g_key_file_get_boolean(key, "Search", "commands", &error);
+        if (!error) *commands = value;
+        g_clear_error(&error);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void save_search_prefs(State *st) {
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_boolean(key, "Search", "descriptions",
+        gtk_switch_get_active(GTK_SWITCH(st->search_descriptions_switch)));
+    g_key_file_set_boolean(key, "Search", "commands",
+        gtk_switch_get_active(GTK_SWITCH(st->search_commands_switch)));
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    char *path = get_search_prefs_path();
+    g_file_set_contents(path, data, length, NULL);
+    g_free(path);
+    g_free(data);
+    g_key_file_unref(key);
+}
+
+static gboolean on_search_source_changed(GtkSwitch *widget, gboolean state,
+    gpointer user_data) {
+    State *st = user_data;
+    if (st->search_loading) return FALSE;
+    st->search_loading = TRUE;
+    gtk_switch_set_active(widget, state);
+    st->search_loading = FALSE;
+    save_search_prefs(st);
+    return TRUE;
+}
+
+static void on_search_reset(GtkButton *button, gpointer user_data) {
+    (void)button;
+    State *st = user_data;
+    st->search_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->search_descriptions_switch), TRUE);
+    gtk_switch_set_active(GTK_SWITCH(st->search_commands_switch), FALSE);
+    st->search_loading = FALSE;
+    save_search_prefs(st);
+}
+
 static char *read_os_pretty_name(void) {
     FILE *f = fopen("/etc/os-release", "r");
     if (!f) return g_strdup("Linux");
@@ -2501,6 +2664,140 @@ static GtkWidget *build_applications_page(State *st) {
     return scroll;
 }
 
+static GtkWidget *build_notifications_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Уведомления"));
+
+    GtkWidget *dnd_card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(dnd_card, "ps-card");
+    GtkWidget *dnd_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(dnd_text, TRUE);
+    GtkWidget *dnd_title = gtk_label_new("Не беспокоить");
+    gtk_widget_add_css_class(dnd_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(dnd_title), 0.0f);
+    st->notifications_status_label = gtk_label_new("Проверка состояния…");
+    gtk_widget_add_css_class(st->notifications_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->notifications_status_label), 0.0f);
+    st->notifications_dnd_switch = gtk_switch_new();
+    gtk_widget_set_valign(st->notifications_dnd_switch, GTK_ALIGN_CENTER);
+    g_signal_connect(st->notifications_dnd_switch, "state-set",
+        G_CALLBACK(on_notifications_dnd_changed), st);
+    gtk_box_append(GTK_BOX(dnd_text), dnd_title);
+    gtk_box_append(GTK_BOX(dnd_text), st->notifications_status_label);
+    gtk_box_append(GTK_BOX(dnd_card), dnd_text);
+    gtk_box_append(GTK_BOX(dnd_card), st->notifications_dnd_switch);
+    gtk_box_append(GTK_BOX(box), dnd_card);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(actions, "ps-card");
+    GtkWidget *actions_title = gtk_label_new("Действия");
+    gtk_widget_add_css_class(actions_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(actions_title), 0.0f);
+    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *test = gtk_button_new_with_label("Тестовое уведомление");
+    gtk_widget_add_css_class(test, "ps-btn-primary");
+    g_signal_connect(test, "clicked", G_CALLBACK(on_notifications_test), st);
+    GtkWidget *dismiss = gtk_button_new_with_label("Закрыть все");
+    gtk_widget_add_css_class(dismiss, "ps-btn");
+    g_signal_connect(dismiss, "clicked",
+        G_CALLBACK(on_notifications_dismiss), st);
+    GtkWidget *restore = gtk_button_new_with_label("Вернуть последнее");
+    gtk_widget_add_css_class(restore, "ps-btn");
+    g_signal_connect(restore, "clicked",
+        G_CALLBACK(on_notifications_restore), st);
+    gtk_box_append(GTK_BOX(buttons), test);
+    gtk_box_append(GTK_BOX(buttons), dismiss);
+    gtk_box_append(GTK_BOX(buttons), restore);
+    gtk_box_append(GTK_BOX(actions), actions_title);
+    gtk_box_append(GTK_BOX(actions), buttons);
+    gtk_box_append(GTK_BOX(box), actions);
+    refresh_notifications(st);
+    return scroll;
+}
+
+static GtkWidget *make_search_source_row(const char *title_text,
+    const char *description, GtkWidget *toggle) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *title = gtk_label_new(title_text);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *details = gtk_label_new(description);
+    gtk_widget_add_css_class(details, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(details), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(details), TRUE);
+    gtk_widget_set_valign(toggle, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(text), title);
+    gtk_box_append(GTK_BOX(text), details);
+    gtk_box_append(GTK_BOX(row), text);
+    gtk_box_append(GTK_BOX(row), toggle);
+    return row;
+}
+
+static GtkWidget *build_search_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Поиск"));
+
+    GtkWidget *sources = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(sources, "ps-card");
+    GtkWidget *sources_title = gtk_label_new("Источники поиска Plume");
+    gtk_widget_add_css_class(sources_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(sources_title), 0.0f);
+    gtk_box_append(GTK_BOX(sources), sources_title);
+
+    GtkWidget *apps_toggle = gtk_label_new("Всегда включено");
+    gtk_widget_add_css_class(apps_toggle, "ps-source-fixed");
+    gtk_box_append(GTK_BOX(sources), make_search_source_row(
+        "Названия приложений", "Основной источник результатов поиска.",
+        apps_toggle));
+
+    st->search_descriptions_switch = gtk_switch_new();
+    st->search_commands_switch = gtk_switch_new();
+    gboolean descriptions = TRUE, commands = FALSE;
+    load_search_prefs(&descriptions, &commands);
+    st->search_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->search_descriptions_switch), descriptions);
+    gtk_switch_set_active(GTK_SWITCH(st->search_commands_switch), commands);
+    st->search_loading = FALSE;
+    g_signal_connect(st->search_descriptions_switch, "state-set",
+        G_CALLBACK(on_search_source_changed), st);
+    g_signal_connect(st->search_commands_switch, "state-set",
+        G_CALLBACK(on_search_source_changed), st);
+    gtk_box_append(GTK_BOX(sources), make_search_source_row(
+        "Описания приложений",
+        "Находить приложения по их назначению и описанию.",
+        st->search_descriptions_switch));
+    gtk_box_append(GTK_BOX(sources), make_search_source_row(
+        "Названия команд",
+        "Находить приложения по исполняемому файлу и команде запуска.",
+        st->search_commands_switch));
+    gtk_box_append(GTK_BOX(box), sources);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *try_search = gtk_button_new_with_label("Проверить поиск");
+    gtk_widget_add_css_class(try_search, "ps-btn-primary");
+    g_object_set_data(G_OBJECT(try_search), "tool-cmd", "plume-launcher");
+    g_signal_connect(try_search, "clicked", G_CALLBACK(on_launch_tool), NULL);
+    GtkWidget *reset = gtk_button_new_with_label("Сбросить настройки");
+    gtk_widget_add_css_class(reset, "ps-btn");
+    g_signal_connect(reset, "clicked", G_CALLBACK(on_search_reset), st);
+    gtk_box_append(GTK_BOX(actions), try_search);
+    gtk_box_append(GTK_BOX(actions), reset);
+    gtk_box_append(GTK_BOX(box), actions);
+    return scroll;
+}
+
 static GtkWidget *build_appearance_page(State *st) {
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -2910,10 +3207,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_stack_add_named(GTK_STACK(st->stack), build_appearance_page(st), "appearance");
     gtk_stack_add_named(GTK_STACK(st->stack),
         build_applications_page(st), "applications");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Уведомления", "󰂚", "Режим «Не беспокоить» и правила уведомлений приложений."), "notifications");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Поиск", "󰍉", "Источники поиска и параметры индексирования."), "search");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_notifications_page(st), "notifications");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_search_page(st), "search");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
         "Сетевые учётные записи", "󰀄", "Подключение облачных и сетевых учётных записей."), "online-accounts");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(

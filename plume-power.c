@@ -17,6 +17,9 @@ typedef struct {
 
 typedef struct {
     GtkApplication *app;
+    GtkCssProvider *theme_css;
+    GFileMonitor *theme_monitor;
+    guint theme_timer;
     GtkWidget *win;
     GtkWidget *card;
     PowerAction actions[4];
@@ -86,7 +89,87 @@ static gboolean finish_hide_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
+static void refresh_theme(State *st) {
+    char accent[8] = "#2f7fe6";
+    gboolean light = FALSE;
+    char *path = g_build_filename(g_get_user_config_dir(), "plume", "theme.ini", NULL);
+    char *content = NULL;
+    if (g_file_get_contents(path, &content, NULL, NULL)) {
+        char **lines = g_strsplit(content, "\n", -1);
+        for (guint i = 0; lines[i]; i++) {
+            char *line = g_strstrip(lines[i]);
+            char *eq = strchr(line, '=');
+            if (!eq) continue;
+            *eq = '\0';
+            char *key = g_strstrip(line);
+            char *value = g_strstrip(eq + 1);
+            if (strcmp(key, "mode") == 0) {
+                light = strcmp(value, "light") == 0;
+            } else if (strcmp(key, "accent") == 0) {
+                gboolean valid = strlen(value) == 7 && value[0] == '#';
+                for (guint j = 1; valid && j < 7; j++)
+                    valid = g_ascii_isxdigit(value[j]);
+                if (valid) g_strlcpy(accent, value, sizeof accent);
+            }
+        }
+        g_strfreev(lines);
+    }
+    g_free(content);
+    g_free(path);
+    char *css = g_strdup_printf(
+        "@define-color plume_power_bg %s;"
+        "@define-color plume_power_fg %s;"
+        "@define-color plume_power_border %s;"
+        "@define-color plume_power_hover %s;"
+        "@define-color plume_power_accent %s;",
+        light ? "#f3f5f9" : "#171a21",
+        light ? "#171c26" : "#edf0f5",
+        light ? "#b8c3d4" : "#2b3342",
+        light ? "#dce2ec" : "#202633", accent);
+    gtk_css_provider_load_from_string(st->theme_css, css);
+    g_free(css);
+}
+
+static gboolean refresh_theme_cb(gpointer user_data) {
+    State *st = user_data;
+    st->theme_timer = 0;
+    refresh_theme(st);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_theme_changed(GFileMonitor *monitor, GFile *file,
+                             GFile *other_file, GFileMonitorEvent event,
+                             gpointer user_data) {
+    (void)monitor;
+    (void)event;
+    State *st = user_data;
+    char *name = file ? g_file_get_basename(file) : NULL;
+    char *other_name = other_file ? g_file_get_basename(other_file) : NULL;
+    gboolean relevant = g_strcmp0(name, "theme.ini") == 0 ||
+                        g_strcmp0(other_name, "theme.ini") == 0;
+    g_free(name);
+    g_free(other_name);
+    if (!relevant) return;
+    if (st->theme_timer) g_source_remove(st->theme_timer);
+    st->theme_timer = g_timeout_add(80, refresh_theme_cb, st);
+}
+
+static void watch_theme(State *st) {
+    char *dir = g_build_filename(g_get_user_config_dir(), "plume", NULL);
+    if (g_mkdir_with_parents(dir, 0700) == 0) {
+        GFile *file = g_file_new_for_path(dir);
+        st->theme_monitor = g_file_monitor_directory(
+            file, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
+        if (st->theme_monitor)
+            g_signal_connect(st->theme_monitor, "changed",
+                             G_CALLBACK(on_theme_changed), st);
+        g_object_unref(file);
+    }
+    g_free(dir);
+}
+
 static void show_power(State *st) {
+    refresh_theme(st);
     if (st->hide_timer) {
         g_source_remove(st->hide_timer);
         st->hide_timer = 0;
@@ -181,6 +264,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         g_application_hold(G_APPLICATION(app));
     }
 
+    st->theme_css = gtk_css_provider_new();
+    refresh_theme(st);
+    watch_theme(st);
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(), GTK_STYLE_PROVIDER(st->theme_css),
+        GTK_STYLE_PROVIDER_PRIORITY_USER);
+
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
         "window.plume-win, window.background.plume-win {"
@@ -189,9 +279,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "  box-shadow: none;"
         "}"
         "box.plume-power-card {"
-        "  background-color: #171a21;"
-        "  color: #edf0f5;"
-        "  border: 1px solid #2b3342;"
+        "  background-color: @plume_power_bg;"
+        "  color: @plume_power_fg;"
+        "  border: 1px solid @plume_power_border;"
         "  border-radius: 6px;"
         "  font-family: 'Onest', 'Sora', 'JetBrainsMono Nerd Font', 'Symbols Nerd Font', sans-serif;"
         "  font-size: 13px;"
@@ -206,15 +296,15 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "}"
         "button.plume-power-btn {"
         "  background: transparent;"
-        "  color: #edf0f5;"
+        "  color: @plume_power_fg;"
         "  border: 1px solid transparent;"
         "  border-radius: 6px;"
         "  padding: 8px 12px;"
         "  box-shadow: none;"
         "}"
         "button.plume-power-btn:hover {"
-        "  background: #202633;"
-        "  border-color: #2b3342;"
+        "  background: @plume_power_hover;"
+        "  border-color: @plume_power_border;"
         "}"
         "button.plume-power-btn.armed {"
         "  background: #3a1d20;"
@@ -307,6 +397,14 @@ int main(int argc, char **argv) {
     GtkApplication *app = gtk_application_new(NULL, G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), &st);
     int status = g_application_run(G_APPLICATION(app), 1, argv);
+    if (st.theme_timer) g_source_remove(st.theme_timer);
+    if (st.theme_monitor) g_file_monitor_cancel(st.theme_monitor);
+    g_clear_object(&st.theme_monitor);
+    if (st.theme_css) {
+        gtk_style_context_remove_provider_for_display(
+            gdk_display_get_default(), GTK_STYLE_PROVIDER(st.theme_css));
+        g_clear_object(&st.theme_css);
+    }
     g_object_unref(app);
     unlink(pid_path);
     g_free(pid_path);

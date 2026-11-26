@@ -27,6 +27,8 @@ typedef struct {
     guint show_timer;
     guint hide_timer;
     gint64 last_hide_us;
+    gboolean search_descriptions;
+    gboolean search_commands;
 } State;
 
 static gboolean send_signal_to_existing(const char *pid_path, int sig) {
@@ -56,17 +58,47 @@ static int cmp_app(gconstpointer a, gconstpointer b) {
     return g_utf8_collate(na ? na : "", nb ? nb : "");
 }
 
+static void load_search_prefs(State *st) {
+    st->search_descriptions = TRUE;
+    st->search_commands = FALSE;
+    char *path = g_build_filename(
+        g_get_user_config_dir(), "plume", "search.ini", NULL);
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+        gboolean value = g_key_file_get_boolean(
+            key, "Search", "descriptions", &error);
+        if (!error) st->search_descriptions = value;
+        g_clear_error(&error);
+        value = g_key_file_get_boolean(key, "Search", "commands", &error);
+        if (!error) st->search_commands = value;
+        g_clear_error(&error);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static gboolean folded_contains(const char *text, const char *query_folded) {
+    if (!text || !*text) return FALSE;
+    char *text_folded = g_utf8_casefold(text, -1);
+    gboolean match = strstr(text_folded, query_folded) != NULL;
+    g_free(text_folded);
+    return match;
+}
+
 static gboolean filter_row(GtkListBoxRow *row, gpointer user_data) {
     State *st = user_data;
     const char *q = gtk_editable_get_text(GTK_EDITABLE(st->entry));
     if (!q || !*q) return TRUE;
-    const char *name = g_object_get_data(G_OBJECT(row), "app-name");
-    if (!name) return FALSE;
     char *q_fold = g_utf8_casefold(q, -1);
-    char *n_fold = g_utf8_casefold(name, -1);
-    gboolean match = strstr(n_fold, q_fold) != NULL;
+    const char *name = g_object_get_data(G_OBJECT(row), "app-name");
+    const char *description = g_object_get_data(
+        G_OBJECT(row), "app-description");
+    const char *command = g_object_get_data(G_OBJECT(row), "app-command");
+    gboolean match = folded_contains(name, q_fold) ||
+        (st->search_descriptions && folded_contains(description, q_fold)) ||
+        (st->search_commands && folded_contains(command, q_fold));
     g_free(q_fold);
-    g_free(n_fold);
     return match;
 }
 
@@ -106,6 +138,7 @@ static gboolean finish_hide_cb(gpointer user_data) {
 /* Refresh on every opening: the launcher daemon survives theme changes. */
 static void refresh_accent(State *st) {
     char accent[8] = "#2f7fe6";
+    gboolean light = FALSE;
     char *path = g_build_filename(g_get_user_config_dir(), "plume", "theme.ini", NULL);
     char *content = NULL;
     if (g_file_get_contents(path, &content, NULL, NULL)) {
@@ -115,7 +148,12 @@ static void refresh_accent(State *st) {
             char *eq = strchr(line, '=');
             if (!eq) continue;
             *eq = '\0';
-            if (strcmp(g_strstrip(line), "accent") != 0) continue;
+            char *key = g_strstrip(line);
+            if (strcmp(key, "mode") == 0) {
+                light = strcmp(g_strstrip(eq + 1), "light") == 0;
+                continue;
+            }
+            if (strcmp(key, "accent") != 0) continue;
             char *value = g_strstrip(eq + 1);
             gboolean valid = strlen(value) == 7 && value[0] == '#';
             for (guint j = 1; valid && j < 7; j++)
@@ -126,7 +164,22 @@ static void refresh_accent(State *st) {
     }
     g_free(content);
     g_free(path);
-    char *css = g_strdup_printf("@define-color plume_launcher_accent %s;", accent);
+    char *css = g_strdup_printf(
+        "@define-color plume_launcher_accent %s;"
+        "@define-color plume_launcher_bg %s;"
+        "@define-color plume_launcher_field %s;"
+        "@define-color plume_launcher_fg %s;"
+        "@define-color plume_launcher_border %s;"
+        "@define-color plume_launcher_hover %s;"
+        "@define-color plume_launcher_selected %s;"
+        "@define-color plume_launcher_muted %s;",
+        accent, light ? "#f3f5f9" : "#171a21",
+        light ? "#e8ecf3" : "#1c212b",
+        light ? "#171c26" : "#edf0f5",
+        light ? "#b8c3d4" : "#2b3342",
+        light ? "#dce2ec" : "#202633",
+        light ? "#cdd5e2" : "#252b37",
+        light ? "#667185" : "#8b96a8");
     gtk_css_provider_load_from_string(st->accent_css, css);
     g_free(css);
 }
@@ -172,6 +225,7 @@ static void watch_theme(State *st) {
 
 static void show_launcher(State *st) {
     refresh_accent(st);
+    load_search_prefs(st);
     if (st->hide_timer) {
         g_source_remove(st->hide_timer);
         st->hide_timer = 0;
@@ -354,8 +408,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "  box-shadow: none;"
         "}"
         "box.plume-card {"
-        "  background-color: #171a21;"
-        "  color: #edf0f5;"
+        "  background-color: @plume_launcher_bg;"
+        "  color: @plume_launcher_fg;"
         "  border: 1px solid @plume_launcher_accent;"
         "  border-radius: 6px;"
         "  font-family: 'Onest', 'Sora', sans-serif;"
@@ -370,9 +424,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "  transform: translateY(0px);"
         "}"
         "entry.plume-search {"
-        "  background: #1c212b;"
-        "  color: #edf0f5;"
-        "  border: 1px solid #2b3342;"
+        "  background: @plume_launcher_field;"
+        "  color: @plume_launcher_fg;"
+        "  border: 1px solid @plume_launcher_border;"
         "  border-radius: 6px;"
         "  padding: 8px 10px;"
         "  min-height: 20px;"
@@ -391,17 +445,24 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         "list.plume-list row {"
         "  padding: 6px 8px;"
         "  border-radius: 6px;"
-        "  color: #edf0f5;"
+        "  color: @plume_launcher_fg;"
         "}"
         "list.plume-list row:hover {"
-        "  background: #202633;"
+        "  background: @plume_launcher_hover;"
         "}"
-        "button.plume-pin {""  background: transparent; border: none; color: #8b96a8; padding: 2px 6px; min-height: 20px; border-radius: 4px; box-shadow: none;""}""button.plume-pin:hover, button.plume-pin.pinned {""  color: @plume_launcher_accent; background: #252b37;""}""list.plume-list row:selected {"
-        "  background: #252b37;"
-        "  color: #ffffff;"
+        "button.plume-pin {"
+        "  background: transparent; border: none; color: @plume_launcher_muted;"
+        "  padding: 2px 6px; min-height: 20px; border-radius: 4px; box-shadow: none;"
+        "}"
+        "button.plume-pin:hover, button.plume-pin.pinned {"
+        "  color: @plume_launcher_accent; background: @plume_launcher_selected;"
+        "}"
+        "list.plume-list row:selected {"
+        "  background: @plume_launcher_selected;"
+        "  color: @plume_launcher_fg;"
         "}"
         "scrollbar slider {"
-        "  background: #2b3342;"
+        "  background: @plume_launcher_border;"
         "  border-radius: 3px;"
         "  min-width: 6px;"
         "}"
@@ -498,6 +559,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
         g_object_set_data_full(G_OBJECT(row), "app-info", g_object_ref(info), g_object_unref);
         g_object_set_data_full(G_OBJECT(row), "app-name", g_strdup(name), g_free);
+        g_object_set_data_full(G_OBJECT(row), "app-description",
+            g_strdup(g_app_info_get_description(info)), g_free);
+        g_object_set_data_full(G_OBJECT(row), "app-command",
+            g_strdup(g_app_info_get_commandline(info)), g_free);
         gtk_list_box_append(GTK_LIST_BOX(st->list), row);
     }
     g_list_free_full(apps, g_object_unref);
