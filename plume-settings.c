@@ -120,6 +120,15 @@ typedef struct {
     GtkWidget *power_status_label;
     GtkWidget *power_profile_label;
     GtkWidget *power_profile_buttons[3];
+
+    /* Многозадачность */
+    GtkWidget *workspace_buttons[5];
+    GtkWidget *workspace_status_label;
+
+    /* Приложения */
+    GtkWidget *default_app_labels[4];
+    GtkWidget *autostart_status_label;
+    GtkWidget *autostart_list;
 } State;
 
 static char *get_plume_root(void) {
@@ -1559,6 +1568,481 @@ static void on_power_refresh(GtkButton *button, gpointer user_data) {
     refresh_power(user_data);
 }
 
+static void refresh_workspaces(State *st) {
+    guint active = 0;
+    for (guint i = 0; i < 5; i++) {
+        char index[8];
+        g_snprintf(index, sizeof(index), "%u", i + 1);
+        char *argv[] = { "plume-ws", "get", index, NULL };
+        char *output = run_command_capture(argv);
+        gboolean is_active = strstr(output, "\"active\"") != NULL;
+        gtk_widget_remove_css_class(st->workspace_buttons[i], "ps-btn");
+        gtk_widget_remove_css_class(st->workspace_buttons[i], "ps-btn-primary");
+        gtk_widget_add_css_class(st->workspace_buttons[i],
+            is_active ? "ps-btn-primary" : "ps-btn");
+        if (is_active) active = i + 1;
+        g_free(output);
+    }
+    char *status = active
+        ? g_strdup_printf("Сейчас открыт рабочий стол %u", active)
+        : g_strdup("Не удалось определить активный рабочий стол");
+    gtk_label_set_text(GTK_LABEL(st->workspace_status_label), status);
+    g_free(status);
+}
+
+static void on_workspace_selected(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    guint index = GPOINTER_TO_UINT(
+        g_object_get_data(G_OBJECT(button), "workspace-index"));
+    if (index < 1 || index > 5) return;
+    char value[8];
+    g_snprintf(value, sizeof(value), "%u", index);
+    char *argv[] = { "plume-ws", "set", value, NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    refresh_workspaces(st);
+}
+
+static void on_workspace_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_workspaces(user_data);
+}
+
+static void on_settings_active_changed(GObject *object, GParamSpec *pspec,
+    gpointer user_data) {
+    (void)pspec;
+    if (gtk_window_is_active(GTK_WINDOW(object)))
+        refresh_workspaces(user_data);
+}
+
+static char *get_user_autostart_dir(void) {
+    char *dir = g_build_filename(g_get_user_config_dir(), "autostart", NULL);
+    g_mkdir_with_parents(dir, 0755);
+    return dir;
+}
+
+static gboolean load_autostart_info(const char *path, char **name,
+    char **command, gboolean *disabled) {
+    GKeyFile *key = g_key_file_new();
+    if (!g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        g_key_file_unref(key);
+        return FALSE;
+    }
+    *name = g_key_file_get_locale_string(key, "Desktop Entry", "Name", NULL, NULL);
+    *command = g_key_file_get_string(key, "Desktop Entry", "Exec", NULL);
+    GError *error = NULL;
+    gboolean hidden = g_key_file_get_boolean(
+        key, "Desktop Entry", "Hidden", &error);
+    g_clear_error(&error);
+    gboolean enabled = g_key_file_get_boolean(
+        key, "Desktop Entry", "X-GNOME-Autostart-enabled", &error);
+    if (error) {
+        g_clear_error(&error);
+        enabled = TRUE;
+    }
+    *disabled = hidden || !enabled;
+    g_key_file_unref(key);
+    return TRUE;
+}
+
+static gboolean write_autostart_entry(const char *filename, const char *name,
+    const char *command, gboolean terminal) {
+    char *dir = get_user_autostart_dir();
+    char *path = g_build_filename(dir, filename, NULL);
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_string(key, "Desktop Entry", "Type", "Application");
+    g_key_file_set_string(key, "Desktop Entry", "Name", name);
+    g_key_file_set_string(key, "Desktop Entry", "Exec", command);
+    g_key_file_set_boolean(key, "Desktop Entry", "Terminal", terminal);
+    g_key_file_set_boolean(key, "Desktop Entry", "X-GNOME-Autostart-enabled", TRUE);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    gboolean ok = g_file_set_contents(path, data, length, NULL);
+    g_free(data);
+    g_key_file_unref(key);
+    g_free(path);
+    g_free(dir);
+    return ok;
+}
+
+static char *safe_desktop_filename(const char *prefix, const char *value) {
+    char *safe = g_strdup(value && *value ? value : "application");
+    for (char *p = safe; *p; p++)
+        if (!g_ascii_isalnum(*p) && *p != '-' && *p != '_' && *p != '.')
+            *p = '-';
+    char *result = g_strdup_printf("%s-%s.desktop", prefix, safe);
+    g_free(safe);
+    return result;
+}
+
+static void refresh_autostart(State *st);
+
+static void write_system_autostart_override(const char *filename) {
+    char *dir = get_user_autostart_dir();
+    char *path = g_build_filename(dir, filename, NULL);
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_string(key, "Desktop Entry", "Type", "Application");
+    g_key_file_set_boolean(key, "Desktop Entry", "Hidden", TRUE);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    g_file_set_contents(path, data, length, NULL);
+    g_free(data);
+    g_key_file_unref(key);
+    g_free(path);
+    g_free(dir);
+}
+
+static void on_autostart_confirm_response(GtkDialog *dialog, int response,
+    gpointer user_data) {
+    State *st = user_data;
+    if (response == GTK_RESPONSE_OK) {
+        const char *filename = g_object_get_data(G_OBJECT(dialog), "filename");
+        const char *action = g_object_get_data(G_OBJECT(dialog), "action");
+        if (filename && g_strcmp0(action, "disable-system") == 0) {
+            write_system_autostart_override(filename);
+        } else if (filename && g_strcmp0(action, "delete-user") == 0) {
+            char *dir = get_user_autostart_dir();
+            char *path = g_build_filename(dir, filename, NULL);
+            g_unlink(path);
+            g_free(path);
+            g_free(dir);
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    refresh_autostart(st);
+}
+
+static void on_autostart_action(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    const char *filename = g_object_get_data(G_OBJECT(button), "filename");
+    const char *action = g_object_get_data(G_OBJECT(button), "action");
+    if (!filename || !action) return;
+
+    if (g_strcmp0(action, "enable-system") == 0) {
+        char *dir = get_user_autostart_dir();
+        char *path = g_build_filename(dir, filename, NULL);
+        g_unlink(path);
+        g_free(path);
+        g_free(dir);
+        refresh_autostart(st);
+        return;
+    }
+
+    const char *message = g_strcmp0(action, "disable-system") == 0
+        ? "Отключить системное приложение для этого пользователя? Системный файл не будет удалён, действие можно отменить позже."
+        : "Удалить это приложение из пользовательского автозапуска?";
+    const char *confirm = g_strcmp0(action, "disable-system") == 0
+        ? "Отключить" : "Удалить";
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Подтверждение", GTK_WINDOW(st->win), GTK_DIALOG_MODAL,
+        "Отмена", GTK_RESPONSE_CANCEL, confirm, GTK_RESPONSE_OK, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *label = gtk_label_new(message);
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_widget_set_margin_top(label, 14);
+    gtk_widget_set_margin_bottom(label, 14);
+    gtk_widget_set_margin_start(label, 14);
+    gtk_widget_set_margin_end(label, 14);
+    gtk_box_append(GTK_BOX(content), label);
+    g_object_set_data_full(G_OBJECT(dialog), "filename",
+        g_strdup(filename), g_free);
+    g_object_set_data_full(G_OBJECT(dialog), "action",
+        g_strdup(action), g_free);
+    g_signal_connect(dialog, "response",
+        G_CALLBACK(on_autostart_confirm_response), st);
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+static GtkWidget *make_autostart_row(State *st, const char *filename,
+    const char *source_path, gboolean system, gboolean disabled) {
+    char *name = NULL, *command = NULL;
+    gboolean file_disabled = FALSE;
+    load_autostart_info(source_path, &name, &command, &file_disabled);
+
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(row, "ps-card");
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *title = gtk_label_new(name ? name : filename);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *exec = gtk_label_new(command && *command
+        ? command : "Команда не указана");
+    gtk_widget_add_css_class(exec, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(exec), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(exec), PANGO_ELLIPSIZE_END);
+    GtkWidget *source = gtk_label_new(system
+        ? (disabled ? "Системное · отключено" : "Системное")
+        : "Пользовательское");
+    gtk_widget_add_css_class(source, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(source), 0.0f);
+    gtk_box_append(GTK_BOX(text), title);
+    gtk_box_append(GTK_BOX(text), exec);
+    gtk_box_append(GTK_BOX(text), source);
+
+    const char *action = system
+        ? (disabled ? "enable-system" : "disable-system") : "delete-user";
+    GtkWidget *button = gtk_button_new_with_label(system
+        ? (disabled ? "Включить" : "Отключить") : "Удалить");
+    gtk_widget_add_css_class(button, "ps-btn");
+    gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+    g_object_set_data_full(G_OBJECT(button), "filename",
+        g_strdup(filename), g_free);
+    g_object_set_data(G_OBJECT(button), "action", (gpointer)action);
+    g_signal_connect(button, "clicked", G_CALLBACK(on_autostart_action), st);
+    gtk_box_append(GTK_BOX(row), text);
+    gtk_box_append(GTK_BOX(row), button);
+    g_free(name);
+    g_free(command);
+    return row;
+}
+
+static void refresh_autostart(State *st) {
+    if (!st->autostart_list) return;
+    clear_box(st->autostart_list);
+    char *user_dir = get_user_autostart_dir();
+    guint enabled_count = 0, disabled_count = 0;
+
+    GDir *system_dir = g_dir_open("/etc/xdg/autostart", 0, NULL);
+    const char *filename;
+    if (system_dir) {
+        while ((filename = g_dir_read_name(system_dir)) != NULL) {
+            if (!g_str_has_suffix(filename, ".desktop")) continue;
+            char *system_path = g_build_filename(
+                "/etc/xdg/autostart", filename, NULL);
+            char *user_path = g_build_filename(user_dir, filename, NULL);
+            if (g_file_test(user_path, G_FILE_TEST_IS_REGULAR)) {
+                char *n = NULL, *c = NULL;
+                gboolean hidden = FALSE;
+                load_autostart_info(user_path, &n, &c, &hidden);
+                g_free(n);
+                g_free(c);
+                if (!hidden) {
+                    g_free(system_path);
+                    g_free(user_path);
+                    continue;
+                }
+                disabled_count++;
+                gtk_box_append(GTK_BOX(st->autostart_list),
+                    make_autostart_row(st, filename, system_path, TRUE, TRUE));
+            } else {
+                gboolean disabled = FALSE;
+                char *n = NULL, *c = NULL;
+                load_autostart_info(system_path, &n, &c, &disabled);
+                g_free(n);
+                g_free(c);
+                if (disabled) disabled_count++; else enabled_count++;
+                gtk_box_append(GTK_BOX(st->autostart_list),
+                    make_autostart_row(st, filename, system_path, TRUE, disabled));
+            }
+            g_free(system_path);
+            g_free(user_path);
+        }
+        g_dir_close(system_dir);
+    }
+
+    GDir *user_entries = g_dir_open(user_dir, 0, NULL);
+    if (user_entries) {
+        while ((filename = g_dir_read_name(user_entries)) != NULL) {
+            if (!g_str_has_suffix(filename, ".desktop")) continue;
+            char *path = g_build_filename(user_dir, filename, NULL);
+            char *system_path = g_build_filename(
+                "/etc/xdg/autostart", filename, NULL);
+            char *n = NULL, *c = NULL;
+            gboolean disabled = FALSE;
+            load_autostart_info(path, &n, &c, &disabled);
+            g_free(n);
+            g_free(c);
+            if (!disabled) {
+                enabled_count++;
+                gtk_box_append(GTK_BOX(st->autostart_list),
+                    make_autostart_row(st, filename, path, FALSE, FALSE));
+            } else if (!g_file_test(system_path, G_FILE_TEST_IS_REGULAR)) {
+                disabled_count++;
+            }
+            g_free(system_path);
+            g_free(path);
+        }
+        g_dir_close(user_entries);
+    }
+
+    if (!enabled_count && !disabled_count) {
+        GtkWidget *empty = gtk_label_new("В автозапуске пока нет приложений.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->autostart_list), empty);
+    }
+    char *status = g_strdup_printf("Включено: %u · Отключено: %u",
+        enabled_count, disabled_count);
+    gtk_label_set_text(GTK_LABEL(st->autostart_status_label), status);
+    g_free(status);
+    g_free(user_dir);
+}
+
+static void refresh_applications(State *st) {
+    static const char *content_types[] = {
+        "text/html", "inode/directory", "image/png", "application/pdf"
+    };
+    for (guint i = 0; i < 4; i++) {
+        GAppInfo *app = g_app_info_get_default_for_type(content_types[i], FALSE);
+        gtk_label_set_text(GTK_LABEL(st->default_app_labels[i]),
+            app ? g_app_info_get_display_name(app) : "Не выбрано");
+        if (app) g_object_unref(app);
+    }
+
+    refresh_autostart(st);
+}
+
+static void on_app_chooser_response(GtkDialog *dialog, int response,
+    gpointer user_data) {
+    State *st = user_data;
+    if (response == GTK_RESPONSE_OK) {
+        const char *content_type = g_object_get_data(
+            G_OBJECT(dialog), "content-type");
+        GAppInfo *app = gtk_app_chooser_get_app_info(GTK_APP_CHOOSER(dialog));
+        if (app && content_type) {
+            GError *error = NULL;
+            g_app_info_set_as_default_for_type(app, content_type, &error);
+            if (error) g_error_free(error);
+            g_object_unref(app);
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    refresh_applications(st);
+}
+
+static void on_choose_default_app(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    const char *content_type = g_object_get_data(
+        G_OBJECT(button), "content-type");
+    if (!content_type) return;
+    GtkWidget *dialog = gtk_app_chooser_dialog_new_for_content_type(
+        GTK_WINDOW(st->win), GTK_DIALOG_MODAL, content_type);
+    gtk_window_set_title(GTK_WINDOW(dialog), "Выбор приложения");
+    g_object_set_data_full(G_OBJECT(dialog), "content-type",
+        g_strdup(content_type), g_free);
+    g_signal_connect(dialog, "response",
+        G_CALLBACK(on_app_chooser_response), st);
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+static void on_add_installed_app_response(GtkDialog *dialog, int response,
+    gpointer user_data) {
+    State *st = user_data;
+    if (response == GTK_RESPONSE_OK) {
+        GtkDropDown *dropdown = g_object_get_data(
+            G_OBJECT(dialog), "app-dropdown");
+        GPtrArray *apps = g_object_get_data(G_OBJECT(dialog), "app-list");
+        guint selected = gtk_drop_down_get_selected(dropdown);
+        if (apps && selected < apps->len) {
+            GAppInfo *app = g_ptr_array_index(apps, selected);
+            const char *name = g_app_info_get_display_name(app);
+            const char *command = g_app_info_get_commandline(app);
+            const char *id = g_app_info_get_id(app);
+            if (name && command) {
+                char *filename = safe_desktop_filename("plume", id ? id : name);
+                write_autostart_entry(filename, name, command, FALSE);
+                g_free(filename);
+            }
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    refresh_autostart(st);
+}
+
+static void on_add_installed_app(GtkButton *button, gpointer user_data) {
+    (void)button;
+    State *st = user_data;
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Добавить приложение", GTK_WINDOW(st->win), GTK_DIALOG_MODAL,
+        "Отмена", GTK_RESPONSE_CANCEL, "Добавить", GTK_RESPONSE_OK, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkStringList *names = gtk_string_list_new(NULL);
+    GPtrArray *apps = g_ptr_array_new_with_free_func(g_object_unref);
+    GList *all = g_app_info_get_all();
+    for (GList *item = all; item; item = item->next) {
+        GAppInfo *app = item->data;
+        if (!g_app_info_should_show(app) || !g_app_info_get_commandline(app)) {
+            g_object_unref(app);
+            continue;
+        }
+        gtk_string_list_append(names, g_app_info_get_display_name(app));
+        g_ptr_array_add(apps, app);
+    }
+    g_list_free(all);
+    GtkWidget *dropdown = gtk_drop_down_new(G_LIST_MODEL(names), NULL);
+    gtk_widget_set_hexpand(dropdown, TRUE);
+    gtk_widget_set_margin_top(dropdown, 14);
+    gtk_widget_set_margin_bottom(dropdown, 14);
+    gtk_widget_set_margin_start(dropdown, 14);
+    gtk_widget_set_margin_end(dropdown, 14);
+    gtk_box_append(GTK_BOX(content), dropdown);
+    g_object_set_data(G_OBJECT(dialog), "app-dropdown", dropdown);
+    g_object_set_data_full(G_OBJECT(dialog), "app-list", apps,
+        (GDestroyNotify)g_ptr_array_unref);
+    g_signal_connect(dialog, "response",
+        G_CALLBACK(on_add_installed_app_response), st);
+    g_object_unref(names);
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+static void on_add_command_response(GtkDialog *dialog, int response,
+    gpointer user_data) {
+    State *st = user_data;
+    if (response == GTK_RESPONSE_OK) {
+        GtkEditable *name_entry = g_object_get_data(
+            G_OBJECT(dialog), "name-entry");
+        GtkEditable *command_entry = g_object_get_data(
+            G_OBJECT(dialog), "command-entry");
+        GtkCheckButton *terminal = g_object_get_data(
+            G_OBJECT(dialog), "terminal-check");
+        const char *name = gtk_editable_get_text(name_entry);
+        const char *command = gtk_editable_get_text(command_entry);
+        if (name && *name && command && *command) {
+            char stamp[32];
+            g_snprintf(stamp, sizeof(stamp), "command-%" G_GINT64_FORMAT,
+                g_get_real_time());
+            char *filename = safe_desktop_filename("plume", stamp);
+            write_autostart_entry(filename, name, command,
+                gtk_check_button_get_active(terminal));
+            g_free(filename);
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    refresh_autostart(st);
+}
+
+static void on_add_command(GtkButton *button, gpointer user_data) {
+    (void)button;
+    State *st = user_data;
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Добавить команду", GTK_WINDOW(st->win), GTK_DIALOG_MODAL,
+        "Отмена", GTK_RESPONSE_CANCEL, "Добавить", GTK_RESPONSE_OK, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *form = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(form, 14);
+    gtk_widget_set_margin_bottom(form, 14);
+    gtk_widget_set_margin_start(form, 14);
+    gtk_widget_set_margin_end(form, 14);
+    GtkWidget *name = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(name), "Название");
+    GtkWidget *command = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(command), "Команда запуска");
+    GtkWidget *terminal = gtk_check_button_new_with_label(
+        "Запускать в терминале");
+    gtk_box_append(GTK_BOX(form), name);
+    gtk_box_append(GTK_BOX(form), command);
+    gtk_box_append(GTK_BOX(form), terminal);
+    gtk_box_append(GTK_BOX(content), form);
+    g_object_set_data(G_OBJECT(dialog), "name-entry", name);
+    g_object_set_data(G_OBJECT(dialog), "command-entry", command);
+    g_object_set_data(G_OBJECT(dialog), "terminal-check", terminal);
+    g_signal_connect(dialog, "response",
+        G_CALLBACK(on_add_command_response), st);
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
 static char *read_os_pretty_name(void) {
     FILE *f = fopen("/etc/os-release", "r");
     if (!f) return g_strdup("Linux");
@@ -1877,6 +2361,143 @@ static GtkWidget *build_power_page(State *st) {
     g_signal_connect(refresh, "clicked", G_CALLBACK(on_power_refresh), st);
     gtk_box_append(GTK_BOX(box), refresh);
     refresh_power(st);
+    return scroll;
+}
+
+static GtkWidget *build_multitasking_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Многозадачность"));
+
+    GtkWidget *workspace_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(workspace_card, "ps-card");
+    GtkWidget *title = gtk_label_new("Рабочие столы");
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    st->workspace_status_label = gtk_label_new("Проверка рабочего стола…");
+    gtk_widget_add_css_class(st->workspace_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->workspace_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(workspace_card), title);
+    gtk_box_append(GTK_BOX(workspace_card), st->workspace_status_label);
+    GtkWidget *workspaces = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    for (guint i = 0; i < 5; i++) {
+        char label[8];
+        g_snprintf(label, sizeof(label), "%u", i + 1);
+        GtkWidget *button = gtk_button_new_with_label(label);
+        g_object_set_data(G_OBJECT(button), "workspace-index",
+            GUINT_TO_POINTER(i + 1));
+        g_signal_connect(button, "clicked",
+            G_CALLBACK(on_workspace_selected), st);
+        st->workspace_buttons[i] = button;
+        gtk_box_append(GTK_BOX(workspaces), button);
+    }
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_workspace_refresh), st);
+    gtk_box_append(GTK_BOX(workspaces), refresh);
+    gtk_box_append(GTK_BOX(workspace_card), workspaces);
+    gtk_box_append(GTK_BOX(box), workspace_card);
+
+    GtkWidget *shortcuts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(shortcuts, "ps-card");
+    GtkWidget *shortcuts_title = gtk_label_new("Управление окнами");
+    gtk_widget_add_css_class(shortcuts_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(shortcuts_title), 0.0f);
+    gtk_box_append(GTK_BOX(shortcuts), shortcuts_title);
+    gtk_box_append(GTK_BOX(shortcuts), make_info_row(
+        "Рабочие столы", "Ctrl + Super + ← / →"));
+    gtk_box_append(GTK_BOX(shortcuts), make_info_row(
+        "Привязка окна", "Super + ← / →"));
+    gtk_box_append(GTK_BOX(shortcuts), make_info_row(
+        "Развернуть", "Super + ↑"));
+    gtk_box_append(GTK_BOX(shortcuts), make_info_row(
+        "Восстановить", "Super + ↓"));
+    gtk_box_append(GTK_BOX(shortcuts), make_info_row(
+        "Переключение окон", "Alt + Tab"));
+    gtk_box_append(GTK_BOX(box), shortcuts);
+    refresh_workspaces(st);
+    return scroll;
+}
+
+static GtkWidget *make_default_app_row(State *st, guint index,
+    const char *title_text, const char *content_type) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *title = gtk_label_new(title_text);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *current = gtk_label_new("Проверка…");
+    gtk_widget_add_css_class(current, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(current), 0.0f);
+    st->default_app_labels[index] = current;
+    GtkWidget *choose = gtk_button_new_with_label("Изменить");
+    gtk_widget_add_css_class(choose, "ps-btn");
+    g_object_set_data(G_OBJECT(choose), "content-type",
+        (gpointer)content_type);
+    g_signal_connect(choose, "clicked",
+        G_CALLBACK(on_choose_default_app), st);
+    gtk_box_append(GTK_BOX(text), title);
+    gtk_box_append(GTK_BOX(text), current);
+    gtk_box_append(GTK_BOX(row), text);
+    gtk_box_append(GTK_BOX(row), choose);
+    return row;
+}
+
+static GtkWidget *build_applications_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Приложения"));
+
+    GtkWidget *defaults = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_add_css_class(defaults, "ps-card");
+    GtkWidget *defaults_title = gtk_label_new("Приложения по умолчанию");
+    gtk_widget_add_css_class(defaults_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(defaults_title), 0.0f);
+    gtk_box_append(GTK_BOX(defaults), defaults_title);
+    gtk_box_append(GTK_BOX(defaults), make_default_app_row(
+        st, 0, "Веб-браузер", "text/html"));
+    gtk_box_append(GTK_BOX(defaults), make_default_app_row(
+        st, 1, "Файловый менеджер", "inode/directory"));
+    gtk_box_append(GTK_BOX(defaults), make_default_app_row(
+        st, 2, "Просмотр изображений", "image/png"));
+    gtk_box_append(GTK_BOX(defaults), make_default_app_row(
+        st, 3, "Документы PDF", "application/pdf"));
+    gtk_box_append(GTK_BOX(box), defaults);
+
+    GtkWidget *autostart = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(autostart, "ps-card");
+    GtkWidget *autostart_title = gtk_label_new("Автозапуск");
+    gtk_widget_add_css_class(autostart_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(autostart_title), 0.0f);
+    st->autostart_status_label = gtk_label_new("Проверка…");
+    gtk_widget_add_css_class(st->autostart_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->autostart_status_label), 0.0f);
+    GtkWidget *autostart_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *add_app = gtk_button_new_with_label("Добавить приложение");
+    gtk_widget_add_css_class(add_app, "ps-btn-primary");
+    g_signal_connect(add_app, "clicked", G_CALLBACK(on_add_installed_app), st);
+    GtkWidget *add_command = gtk_button_new_with_label("Добавить команду");
+    gtk_widget_add_css_class(add_command, "ps-btn");
+    g_signal_connect(add_command, "clicked", G_CALLBACK(on_add_command), st);
+    gtk_box_append(GTK_BOX(autostart_actions), add_app);
+    gtk_box_append(GTK_BOX(autostart_actions), add_command);
+    gtk_box_append(GTK_BOX(autostart), autostart_title);
+    gtk_box_append(GTK_BOX(autostart), st->autostart_status_label);
+    gtk_box_append(GTK_BOX(autostart), autostart_actions);
+    gtk_box_append(GTK_BOX(box), autostart);
+
+    st->autostart_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_append(GTK_BOX(box), st->autostart_list);
+    refresh_applications(st);
     return scroll;
 }
 
@@ -2284,11 +2905,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_stack_add_named(GTK_STACK(st->stack), build_displays_page(st), "displays");
     gtk_stack_add_named(GTK_STACK(st->stack), build_sound_page(st), "sound");
     gtk_stack_add_named(GTK_STACK(st->stack), build_power_page(st), "power");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Многозадачность", "󰕮", "Рабочие столы, привязка окон и переключение задач."), "multitasking");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_multitasking_page(st), "multitasking");
     gtk_stack_add_named(GTK_STACK(st->stack), build_appearance_page(st), "appearance");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Приложения", "󰀻", "Приложения по умолчанию, автозапуск и разрешения."), "applications");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_applications_page(st), "applications");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
         "Уведомления", "󰂚", "Режим «Не беспокоить» и правила уведомлений приложений."), "notifications");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
@@ -2316,6 +2937,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     g_signal_connect(nav, "row-selected", G_CALLBACK(on_nav_selected), st);
     g_signal_connect(search, "search-changed", G_CALLBACK(on_nav_search_changed), nav);
+    g_signal_connect(st->win, "notify::is-active",
+        G_CALLBACK(on_settings_active_changed), st);
     gtk_list_box_select_row(GTK_LIST_BOX(nav), gtk_list_box_get_row_at_index(GTK_LIST_BOX(nav), 7));
 
     gtk_window_present(GTK_WINDOW(st->win));
