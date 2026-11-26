@@ -171,14 +171,39 @@ static void apply_window_css(State *st) {
         "  background-color: %s; background-image: none; color: %s;"
         "  border-bottom: 1px solid %s; box-shadow: none;"
         "}"
-        "box.ps-sidebar {"
-        "  background-color: %s; border-right: 1px solid %s; padding: 12px 8px;"
+        "window.plume-settings-win, window.plume-settings-win headerbar {"
+        "  border-radius: 0;"
         "}"
+        "window.plume-settings-win headerbar windowcontrols > button {"
+        "  background: transparent; border: 1px solid transparent;"
+        "  border-radius: 0; box-shadow: none;"
+        "}"
+        "window.plume-settings-win headerbar windowcontrols > button:hover {"
+        "  background: rgba(127,127,127,0.17);"
+        "}"
+
+        "headerbar button.ps-window-btn {"
+        "  min-width: 32px; min-height: 32px; padding: 0;"
+        "  background: transparent; border: 0; border-radius: 0;"
+        "  box-shadow: none; color: inherit;"
+        "}"
+        "headerbar button.ps-window-btn:hover { background: rgba(127,127,127,0.17); }"
+        "headerbar button.ps-window-btn.ps-close:hover { background: #e04f3e; color: white; }"
+        "box.ps-sidebar {"
+        "  background-color: %s; border-right: 1px solid %s; padding: 10px 7px;"
+        "}"
+        ".ps-sidebar-title { font-size: 16px; font-weight: 700; padding: 4px 9px 7px 9px; }"
+        "entry.ps-nav-search {"
+        "  min-height: 32px; margin: 0 3px 5px 3px; padding: 2px 9px;"
+        "  background: %s; color: %s; border: 1px solid %s; border-radius: 8px;"
+        "}"
+        "entry.ps-nav-search:focus-within { border-color: %s; }"
         "list.ps-nav { background: transparent; }"
-        "list.ps-nav row { padding: 9px 12px; margin: 2px 0; border-radius: 6px; color: %s; }"
+        "list.ps-nav row { min-height: 36px; padding: 4px 10px; margin: 1px 0; border-radius: 7px; color: %s; }"
         "list.ps-nav row:hover { background-color: %s; color: %s; }"
         "list.ps-nav row:selected { background-color: %s; color: #ffffff; }"
-        ".ps-nav-icon { font-size: 15px; min-width: 18px; }"
+        ".ps-nav-icon { font-size: 15px; min-width: 22px; }"
+        ".ps-placeholder-icon { font-size: 34px; color: %s; }"
         "box.ps-page { padding: 20px 24px; }"
         ".ps-title { font-size: 18px; font-weight: 600; color: %s; }"
         ".ps-hero-title { font-size: 20px; font-weight: 600; color: %s; }"
@@ -221,7 +246,8 @@ static void apply_window_css(State *st) {
         bg, fg,
         bg_alt, fg, border,
         bg_alt, border,
-        fg_dim, bg_hover, fg, st->accent,
+        bg, fg, border_s, st->accent,
+        fg_dim, bg_hover, fg, st->accent, st->accent,
         fg, fg,
         bg_alt, border,
         fg, muted, st->accent,
@@ -1161,6 +1187,54 @@ static GtkWidget *build_about_page(void) {
     return box;
 }
 
+static GtkWidget *build_tool_page(const char *title, const char *icon_txt,
+    const char *tool_title, const char *description, const char *cmd) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title(title));
+    gtk_box_append(GTK_BOX(box), make_tool_row(icon_txt, tool_title, description, cmd));
+    return box;
+}
+
+static GtkWidget *build_placeholder_page(const char *title, const char *icon_txt,
+    const char *description) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title(title));
+
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(card, "ps-card");
+    GtkWidget *icon = gtk_label_new(icon_txt);
+    gtk_widget_add_css_class(icon, "ps-placeholder-icon");
+    gtk_widget_set_halign(icon, GTK_ALIGN_START);
+    GtkWidget *status = gtk_label_new("Раздел готовится");
+    gtk_widget_add_css_class(status, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+    GtkWidget *text = gtk_label_new(description);
+    gtk_widget_add_css_class(text, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(text), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(text), TRUE);
+    gtk_box_append(GTK_BOX(card), icon);
+    gtk_box_append(GTK_BOX(card), status);
+    gtk_box_append(GTK_BOX(card), text);
+    gtk_box_append(GTK_BOX(box), card);
+    return box;
+}
+
+static void on_nav_search_changed(GtkSearchEntry *entry, gpointer user_data) {
+    GtkWidget *nav = GTK_WIDGET(user_data);
+    const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+    char *needle = g_utf8_casefold(text ? text : "", -1);
+
+    for (GtkWidget *row = gtk_widget_get_first_child(nav); row;
+         row = gtk_widget_get_next_sibling(row)) {
+        const char *label = g_object_get_data(G_OBJECT(row), "search-label");
+        gboolean visible = !needle[0] || (label && g_strstr_len(label, -1, needle));
+        gtk_widget_set_visible(row, visible);
+    }
+    g_free(needle);
+}
+
 static void add_nav_item(GtkWidget *list, const char *icon_txt, const char *label_txt, const char *page_id) {
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *ico = gtk_label_new(icon_txt);
@@ -1173,8 +1247,11 @@ static void add_nav_item(GtkWidget *list, const char *icon_txt, const char *labe
     GtkWidget *row = gtk_list_box_row_new();
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), hbox);
     g_object_set_data(G_OBJECT(row), "page-id", (gpointer)page_id);
+    g_object_set_data_full(G_OBJECT(row), "search-label",
+        g_utf8_casefold(label_txt, -1), g_free);
     gtk_list_box_append(GTK_LIST_BOX(list), row);
 }
+
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     State *st = user_data;
@@ -1197,24 +1274,57 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     st->win = gtk_application_window_new(app);
     gtk_widget_add_css_class(st->win, "plume-settings-win");
     gtk_window_set_title(GTK_WINDOW(st->win), "Настройки Plume");
-    gtk_window_set_default_size(GTK_WINDOW(st->win), 780, 560);
+    gtk_window_set_default_size(GTK_WINDOW(st->win), 1040, 700);
 
     GtkWidget *root_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_window_set_child(GTK_WINDOW(st->win), root_box);
 
-    GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_widget_add_css_class(sidebar, "ps-sidebar");
-    gtk_widget_set_size_request(sidebar, 195, -1);
+    gtk_widget_set_size_request(sidebar, 270, -1);
     gtk_box_append(GTK_BOX(root_box), sidebar);
+
+    GtkWidget *sidebar_title = gtk_label_new("Настройки");
+    gtk_widget_add_css_class(sidebar_title, "ps-sidebar-title");
+    gtk_label_set_xalign(GTK_LABEL(sidebar_title), 0.0f);
+    gtk_box_append(GTK_BOX(sidebar), sidebar_title);
+
+    GtkWidget *search = gtk_search_entry_new();
+    gtk_widget_add_css_class(search, "ps-nav-search");
+    g_object_set(search, "placeholder-text", "Поиск настроек", NULL);
+    gtk_box_append(GTK_BOX(sidebar), search);
 
     GtkWidget *nav = gtk_list_box_new();
     gtk_widget_add_css_class(nav, "ps-nav");
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(nav), GTK_SELECTION_SINGLE);
+    add_nav_item(nav, "󰤨", "Wi-Fi", "wifi");
+    add_nav_item(nav, "󰈀", "Сеть", "network");
+    add_nav_item(nav, "󰂯", "Bluetooth", "bluetooth");
+    add_nav_item(nav, "󰍹", "Дисплеи", "displays");
+    add_nav_item(nav, "󰕾", "Звук", "sound");
+    add_nav_item(nav, "󰁹", "Питание", "power");
+    add_nav_item(nav, "󰕮", "Многозадачность", "multitasking");
     add_nav_item(nav, "󰏘", "Внешний вид", "appearance");
+    add_nav_item(nav, "󰀻", "Приложения", "applications");
+    add_nav_item(nav, "󰂚", "Уведомления", "notifications");
+    add_nav_item(nav, "󰍉", "Поиск", "search");
+    add_nav_item(nav, "󰀄", "Сетевые учётные записи", "online-accounts");
+    add_nav_item(nav, "󰒡", "Благополучие", "wellbeing");
+    add_nav_item(nav, "󰍽", "Мышь и сенсорная панель", "mouse");
     add_nav_item(nav, "󰌌", "Клавиатура", "keyboard");
+    add_nav_item(nav, "󰏘", "Управление цветом", "color");
+    add_nav_item(nav, "󰐪", "Принтеры", "printers");
+    add_nav_item(nav, "󰖚", "Специальные возможности", "accessibility");
+    add_nav_item(nav, "󰌾", "Конфиденциальность и безопасность", "privacy");
     add_nav_item(nav, "󰒓", "Система", "system");
     add_nav_item(nav, "󰋼", "О Plume", "about");
-    gtk_box_append(GTK_BOX(sidebar), nav);
+
+    GtkWidget *nav_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(nav_scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_vexpand(nav_scroll, TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(nav_scroll), nav);
+    gtk_box_append(GTK_BOX(sidebar), nav_scroll);
 
     st->stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(st->stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
@@ -1222,8 +1332,46 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_hexpand(st->stack, TRUE);
     gtk_widget_set_vexpand(st->stack, TRUE);
 
+    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
+        "Wi-Fi", "󰤨", "Беспроводные сети",
+        "Подключение, сохранённые сети и параметры Wi-Fi.", "nm-connection-editor"), "wifi");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
+        "Сеть", "󰈀", "Сетевые подключения",
+        "Проводные соединения, VPN, мосты и дополнительные параметры.", "nm-connection-editor"), "network");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
+        "Bluetooth", "󰂯", "Устройства Bluetooth",
+        "Поиск, подключение и управление Bluetooth-устройствами.", "blueman-manager"), "bluetooth");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Дисплеи", "󰍹", "Разрешение, масштаб, частота обновления и расположение мониторов."), "displays");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
+        "Звук", "󰕾", "Звуковые устройства",
+        "Громкость, устройства вывода, микрофоны и уровни приложений.", "pavucontrol"), "sound");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Питание", "󰁹", "Профили производительности, сон и поведение кнопки питания."), "power");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Многозадачность", "󰕮", "Рабочие столы, привязка окон и переключение задач."), "multitasking");
     gtk_stack_add_named(GTK_STACK(st->stack), build_appearance_page(st), "appearance");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Приложения", "󰀻", "Приложения по умолчанию, автозапуск и разрешения."), "applications");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Уведомления", "󰂚", "Режим «Не беспокоить» и правила уведомлений приложений."), "notifications");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Поиск", "󰍉", "Источники поиска и параметры индексирования."), "search");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Сетевые учётные записи", "󰀄", "Подключение облачных и сетевых учётных записей."), "online-accounts");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Благополучие", "󰒡", "Экранное время, перерывы и напоминания."), "wellbeing");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Мышь и сенсорная панель", "󰍽", "Скорость указателя, прокрутка, касания и жесты."), "mouse");
     gtk_stack_add_named(GTK_STACK(st->stack), build_keyboard_page(st), "keyboard");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Управление цветом", "󰏘", "Цветовые профили дисплеев и устройств."), "color");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Принтеры", "󰐪", "Добавление принтеров и управление очередью печати."), "printers");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Специальные возможности", "󰖚", "Зрение, слух, ввод и другие параметры доступности."), "accessibility");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
+        "Конфиденциальность и безопасность", "󰌾", "Доступ приложений, блокировка экрана и безопасность системы."), "privacy");
     gtk_stack_add_named(GTK_STACK(st->stack), build_system_page(), "system");
     gtk_stack_add_named(GTK_STACK(st->stack), build_about_page(), "about");
     gtk_box_append(GTK_BOX(root_box), st->stack);
@@ -1231,7 +1379,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     apply_window_css(st);
 
     g_signal_connect(nav, "row-selected", G_CALLBACK(on_nav_selected), st);
-    gtk_list_box_select_row(GTK_LIST_BOX(nav), gtk_list_box_get_row_at_index(GTK_LIST_BOX(nav), 0));
+    g_signal_connect(search, "search-changed", G_CALLBACK(on_nav_search_changed), nav);
+    gtk_list_box_select_row(GTK_LIST_BOX(nav), gtk_list_box_get_row_at_index(GTK_LIST_BOX(nav), 7));
 
     gtk_window_present(GTK_WINDOW(st->win));
 }
