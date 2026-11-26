@@ -97,6 +97,15 @@ typedef struct {
     GtkWidget *wifi_list;
     GtkWidget *network_list;
     gboolean network_loading;
+
+    /* Bluetooth */
+    GtkWidget *bluetooth_switch;
+    GtkWidget *bluetooth_status_lbl;
+    GtkWidget *bluetooth_list;
+    gboolean bluetooth_loading;
+
+    /* Дисплеи */
+    GtkWidget *display_list;
 } State;
 
 static char *get_plume_root(void) {
@@ -1096,6 +1105,230 @@ static void on_network_refresh(GtkButton *button, gpointer user_data) {
     refresh_network(user_data);
 }
 
+static void refresh_bluetooth(State *st) {
+    if (!st->bluetooth_list) return;
+    clear_box(st->bluetooth_list);
+
+    char *show_argv[] = { "bluetoothctl", "show", NULL };
+    char *show = run_command_capture(show_argv);
+    gboolean available = strstr(show, "Controller ") != NULL;
+    gboolean powered = strstr(show, "Powered: yes") != NULL;
+
+    st->bluetooth_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->bluetooth_switch), powered);
+    st->bluetooth_loading = FALSE;
+    gtk_widget_set_sensitive(st->bluetooth_switch, available);
+    gtk_label_set_text(GTK_LABEL(st->bluetooth_status_lbl),
+        !available ? "Bluetooth-адаптер не найден" :
+        powered ? "Bluetooth включён" : "Bluetooth выключен");
+    g_free(show);
+
+    if (!available || !powered) {
+        GtkWidget *empty = gtk_label_new(!available
+            ? "Подключи Bluetooth-адаптер, чтобы увидеть устройства."
+            : "Включи Bluetooth, чтобы увидеть устройства.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->bluetooth_list), empty);
+        return;
+    }
+
+    char *devices_argv[] = { "bluetoothctl", "devices", NULL };
+    char *output = run_command_capture(devices_argv);
+    char **lines = g_strsplit(output, "\n", -1);
+    guint count = 0;
+    for (guint i = 0; lines[i] && count < 30; i++) {
+        if (!g_str_has_prefix(lines[i], "Device ")) continue;
+        char *record = g_strdup(lines[i] + 7);
+        char *space = strchr(record, ' ');
+        if (!space) {
+            g_free(record);
+            continue;
+        }
+        *space = '\0';
+        const char *mac = record;
+        const char *name = space + 1;
+
+        char *info_argv[] = { "bluetoothctl", "info", (char *)mac, NULL };
+        char *info = run_command_capture(info_argv);
+        gboolean connected = strstr(info, "Connected: yes") != NULL;
+        gboolean paired = strstr(info, "Paired: yes") != NULL;
+        char *details = g_strdup_printf("%s%s", mac,
+            paired ? " · Сопряжено" : "");
+        gtk_box_append(GTK_BOX(st->bluetooth_list),
+            make_network_row("󰂯", name, details, connected));
+        g_free(details);
+        g_free(info);
+        g_free(record);
+        count++;
+    }
+    if (!count) {
+        GtkWidget *empty = gtk_label_new("Устройства пока не найдены. Запусти поиск.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->bluetooth_list), empty);
+    }
+    g_strfreev(lines);
+    g_free(output);
+}
+
+static gboolean on_bluetooth_state_set(GtkSwitch *widget, gboolean state,
+    gpointer user_data) {
+    (void)widget;
+    State *st = user_data;
+    if (st->bluetooth_loading) return FALSE;
+    char *argv[] = { "bluetoothctl", "power", state ? "on" : "off", NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    refresh_bluetooth(st);
+    return TRUE;
+}
+
+static void on_bluetooth_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_bluetooth(user_data);
+}
+
+static gboolean on_bluetooth_scan_finished(gpointer user_data) {
+    refresh_bluetooth(user_data);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_bluetooth_scan(GtkButton *button, gpointer user_data) {
+    (void)button;
+    char *argv[] = { "bluetoothctl", "--timeout", "6", "scan", "on", NULL };
+    GError *error = NULL;
+    g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+        NULL, NULL, NULL, &error);
+    if (error) g_error_free(error);
+    g_timeout_add_seconds(7, on_bluetooth_scan_finished, user_data);
+}
+
+static void refresh_displays(State *st);
+
+static void on_display_scale(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    const char *output = g_object_get_data(G_OBJECT(button), "output-name");
+    const char *scale = g_object_get_data(G_OBJECT(button), "output-scale");
+    if (!output || !scale) return;
+    char *argv[] = {
+        "wlr-randr", "--output", (char *)output, "--scale", (char *)scale, NULL
+    };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    refresh_displays(st);
+}
+
+static GtkWidget *make_display_row(State *st, const char *output,
+    const char *details) {
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(card, "ps-card");
+
+    GtkWidget *head = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *icon = gtk_label_new("󰍹");
+    gtk_widget_add_css_class(icon, "ps-tool-icon");
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *name = gtk_label_new(output);
+    gtk_widget_add_css_class(name, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(name), 0.0f);
+    GtkWidget *info = gtk_label_new(details);
+    gtk_widget_add_css_class(info, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(info), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(info), TRUE);
+    gtk_box_append(GTK_BOX(text), name);
+    gtk_box_append(GTK_BOX(text), info);
+    gtk_box_append(GTK_BOX(head), icon);
+    gtk_box_append(GTK_BOX(head), text);
+    gtk_box_append(GTK_BOX(card), head);
+
+    GtkWidget *scales = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *label = gtk_label_new("Масштаб:");
+    gtk_widget_add_css_class(label, "ps-muted");
+    gtk_box_append(GTK_BOX(scales), label);
+    const char *scale_values[] = { "1", "1.25", "1.5", "2", NULL };
+    const char *scale_labels[] = { "100%", "125%", "150%", "200%", NULL };
+    for (guint i = 0; scale_values[i]; i++) {
+        GtkWidget *button = gtk_button_new_with_label(scale_labels[i]);
+        gtk_widget_add_css_class(button, "ps-btn");
+        g_object_set_data_full(G_OBJECT(button), "output-name",
+            g_strdup(output), g_free);
+        g_object_set_data(G_OBJECT(button), "output-scale",
+            (gpointer)scale_values[i]);
+        g_signal_connect(button, "clicked", G_CALLBACK(on_display_scale), st);
+        gtk_box_append(GTK_BOX(scales), button);
+    }
+    gtk_box_append(GTK_BOX(card), scales);
+    return card;
+}
+
+static void append_display_detail(GString *details, const char *value) {
+    if (details->len) g_string_append(details, " · ");
+    g_string_append(details, value);
+}
+
+static void refresh_displays(State *st) {
+    if (!st->display_list) return;
+    clear_box(st->display_list);
+    char *argv[] = { "wlr-randr", NULL };
+    char *output = run_command_capture(argv);
+    char **lines = g_strsplit(output, "\n", -1);
+    char *current_output = NULL;
+    GString *details = g_string_new(NULL);
+    guint count = 0;
+
+    for (guint i = 0; lines[i]; i++) {
+        if (lines[i][0] && !g_ascii_isspace(lines[i][0])) {
+            if (current_output) {
+                gtk_box_append(GTK_BOX(st->display_list),
+                    make_display_row(st, current_output,
+                        details->len ? details->str : "Параметры не получены"));
+                count++;
+                g_free(current_output);
+                g_string_truncate(details, 0);
+            }
+            char *header = g_strdup(lines[i]);
+            char *space = strchr(header, ' ');
+            if (space) *space = '\0';
+            current_output = header;
+            continue;
+        }
+        if (!current_output) continue;
+        char *value = g_strdup(lines[i]);
+        g_strstrip(value);
+        if (g_str_has_prefix(value, "Enabled:") ||
+            g_str_has_prefix(value, "Position:") ||
+            g_str_has_prefix(value, "Scale:") ||
+            g_str_has_prefix(value, "Transform:") ||
+            strstr(value, "(current)")) {
+            append_display_detail(details, value);
+        }
+        g_free(value);
+    }
+    if (current_output) {
+        gtk_box_append(GTK_BOX(st->display_list),
+            make_display_row(st, current_output,
+                details->len ? details->str : "Параметры не получены"));
+        count++;
+        g_free(current_output);
+    }
+    if (!count) {
+        GtkWidget *empty = gtk_label_new(
+            "Не удалось получить список дисплеев. Проверь наличие wlr-randr.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->display_list), empty);
+    }
+    g_string_free(details, TRUE);
+    g_strfreev(lines);
+    g_free(output);
+}
+
+static void on_display_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_displays(user_data);
+}
+
 static char *read_os_pretty_name(void) {
     FILE *f = fopen("/etc/os-release", "r");
     if (!f) return g_strdup("Linux");
@@ -1195,6 +1428,90 @@ static GtkWidget *build_network_page(State *st) {
     st->network_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->network_list);
     refresh_network(st);
+    return scroll;
+}
+
+static GtkWidget *build_bluetooth_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Bluetooth"));
+
+    GtkWidget *power_card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(power_card, "ps-card");
+    GtkWidget *info = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(info, TRUE);
+    GtkWidget *title = gtk_label_new("Bluetooth");
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    st->bluetooth_status_lbl = gtk_label_new("Проверка адаптера…");
+    gtk_widget_add_css_class(st->bluetooth_status_lbl, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->bluetooth_status_lbl), 0.0f);
+    gtk_box_append(GTK_BOX(info), title);
+    gtk_box_append(GTK_BOX(info), st->bluetooth_status_lbl);
+    st->bluetooth_switch = gtk_switch_new();
+    gtk_widget_set_valign(st->bluetooth_switch, GTK_ALIGN_CENTER);
+    g_signal_connect(st->bluetooth_switch, "state-set",
+        G_CALLBACK(on_bluetooth_state_set), st);
+    gtk_box_append(GTK_BOX(power_card), info);
+    gtk_box_append(GTK_BOX(power_card), st->bluetooth_switch);
+    gtk_box_append(GTK_BOX(box), power_card);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *scan = gtk_button_new_with_label("Искать устройства");
+    gtk_widget_add_css_class(scan, "ps-btn-primary");
+    g_signal_connect(scan, "clicked", G_CALLBACK(on_bluetooth_scan), st);
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_bluetooth_refresh), st);
+    GtkWidget *manager = gtk_button_new_with_label("Управление устройствами");
+    gtk_widget_add_css_class(manager, "ps-btn");
+    g_object_set_data(G_OBJECT(manager), "tool-cmd", "blueman-manager");
+    g_signal_connect(manager, "clicked", G_CALLBACK(on_launch_tool), NULL);
+    gtk_box_append(GTK_BOX(actions), scan);
+    gtk_box_append(GTK_BOX(actions), refresh);
+    gtk_box_append(GTK_BOX(actions), manager);
+    gtk_box_append(GTK_BOX(box), actions);
+
+    st->bluetooth_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_append(GTK_BOX(box), st->bluetooth_list);
+    refresh_bluetooth(st);
+    return scroll;
+}
+
+static GtkWidget *build_displays_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Дисплеи"));
+
+    GtkWidget *description = gtk_label_new(
+        "Подключённые дисплеи, текущий режим и быстрый выбор масштаба.");
+    gtk_widget_add_css_class(description, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(description), 0.0f);
+    gtk_box_append(GTK_BOX(box), description);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn-primary");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_display_refresh), st);
+    GtkWidget *layout = gtk_button_new_with_label("Расположение дисплеев");
+    gtk_widget_add_css_class(layout, "ps-btn");
+    g_object_set_data(G_OBJECT(layout), "tool-cmd", "wdisplays");
+    g_signal_connect(layout, "clicked", G_CALLBACK(on_launch_tool), NULL);
+    gtk_box_append(GTK_BOX(actions), refresh);
+    gtk_box_append(GTK_BOX(actions), layout);
+    gtk_box_append(GTK_BOX(box), actions);
+
+    st->display_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_append(GTK_BOX(box), st->display_list);
+    refresh_displays(st);
     return scroll;
 }
 
@@ -1598,11 +1915,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     gtk_stack_add_named(GTK_STACK(st->stack), build_wifi_page(st), "wifi");
     gtk_stack_add_named(GTK_STACK(st->stack), build_network_page(st), "network");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
-        "Bluetooth", "󰂯", "Устройства Bluetooth",
-        "Поиск, подключение и управление Bluetooth-устройствами.", "blueman-manager"), "bluetooth");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Дисплеи", "󰍹", "Разрешение, масштаб, частота обновления и расположение мониторов."), "displays");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_bluetooth_page(st), "bluetooth");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_displays_page(st), "displays");
     gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
         "Звук", "󰕾", "Звуковые устройства",
         "Громкость, устройства вывода, микрофоны и уровни приложений.", "pavucontrol"), "sound");
