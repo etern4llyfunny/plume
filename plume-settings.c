@@ -106,6 +106,20 @@ typedef struct {
 
     /* Дисплеи */
     GtkWidget *display_list;
+
+    /* Звук */
+    GtkWidget *sound_output_scale;
+    GtkWidget *sound_input_scale;
+    GtkWidget *sound_output_enabled;
+    GtkWidget *sound_input_enabled;
+    GtkWidget *sound_output_label;
+    GtkWidget *sound_input_label;
+    gboolean sound_loading;
+
+    /* Питание */
+    GtkWidget *power_status_label;
+    GtkWidget *power_profile_label;
+    GtkWidget *power_profile_buttons[3];
 } State;
 
 static char *get_plume_root(void) {
@@ -1329,6 +1343,222 @@ static void on_display_refresh(GtkButton *button, gpointer user_data) {
     refresh_displays(user_data);
 }
 
+static char *get_wpctl_description(const char *target) {
+    char *argv[] = { "wpctl", "inspect", (char *)target, NULL };
+    char *output = run_command_capture(argv);
+    char *result = NULL;
+    char **lines = g_strsplit(output, "\n", -1);
+    for (guint i = 0; lines[i]; i++) {
+        char *key = strstr(lines[i], "node.description =");
+        if (!key) continue;
+        char *value = strchr(key, '=');
+        if (!value) continue;
+        value++;
+        g_strstrip(value);
+        if (value[0] == '"') value++;
+        size_t len = strlen(value);
+        if (len && value[len - 1] == '"') value[len - 1] = '\0';
+        result = g_strdup(value);
+        break;
+    }
+    g_strfreev(lines);
+    g_free(output);
+    return result;
+}
+
+static gboolean read_wpctl_volume(const char *target, double *volume,
+    gboolean *muted) {
+    char *argv[] = { "wpctl", "get-volume", (char *)target, NULL };
+    char *output = run_command_capture(argv);
+    char *start = strstr(output, "Volume:");
+    char *end = NULL;
+    double value = 0.0;
+    if (start) {
+        start += strlen("Volume:");
+        while (g_ascii_isspace(*start)) start++;
+        value = g_ascii_strtod(start, &end);
+    }
+    gboolean ok = start && end != start;
+    if (ok) {
+        *volume = value;
+        *muted = strstr(output, "[MUTED]") != NULL;
+    }
+    g_free(output);
+    return ok;
+}
+
+static void refresh_sound(State *st) {
+    double output_volume = 0.0, input_volume = 0.0;
+    gboolean output_muted = FALSE, input_muted = FALSE;
+    gboolean have_output = read_wpctl_volume(
+        "@DEFAULT_AUDIO_SINK@", &output_volume, &output_muted);
+    gboolean have_input = read_wpctl_volume(
+        "@DEFAULT_AUDIO_SOURCE@", &input_volume, &input_muted);
+    char *output_name = get_wpctl_description("@DEFAULT_AUDIO_SINK@");
+    char *input_name = get_wpctl_description("@DEFAULT_AUDIO_SOURCE@");
+
+    st->sound_loading = TRUE;
+    gtk_widget_set_sensitive(st->sound_output_scale, have_output);
+    gtk_widget_set_sensitive(st->sound_output_enabled, have_output);
+    gtk_widget_set_sensitive(st->sound_input_scale, have_input);
+    gtk_widget_set_sensitive(st->sound_input_enabled, have_input);
+    if (have_output) {
+        gtk_range_set_value(GTK_RANGE(st->sound_output_scale),
+            CLAMP(output_volume * 100.0, 0.0, 150.0));
+        gtk_switch_set_active(GTK_SWITCH(st->sound_output_enabled), !output_muted);
+    }
+    if (have_input) {
+        gtk_range_set_value(GTK_RANGE(st->sound_input_scale),
+            CLAMP(input_volume * 100.0, 0.0, 150.0));
+        gtk_switch_set_active(GTK_SWITCH(st->sound_input_enabled), !input_muted);
+    }
+    st->sound_loading = FALSE;
+
+    char *output_text = have_output
+        ? g_strdup_printf("%s · %.0f%%", output_name ? output_name : "Выход",
+            output_volume * 100.0)
+        : g_strdup("Устройство вывода не найдено");
+    char *input_text = have_input
+        ? g_strdup_printf("%s · %.0f%%", input_name ? input_name : "Микрофон",
+            input_volume * 100.0)
+        : g_strdup("Микрофон не найден");
+    gtk_label_set_text(GTK_LABEL(st->sound_output_label), output_text);
+    gtk_label_set_text(GTK_LABEL(st->sound_input_label), input_text);
+    g_free(output_text);
+    g_free(input_text);
+    g_free(output_name);
+    g_free(input_name);
+}
+
+static void on_sound_volume_changed(GtkRange *range, gpointer user_data) {
+    State *st = user_data;
+    if (st->sound_loading) return;
+    const char *target = g_object_get_data(G_OBJECT(range), "audio-target");
+    if (!target) return;
+    char value[24];
+    g_snprintf(value, sizeof(value), "%.0f%%", gtk_range_get_value(range));
+    char *argv[] = { "wpctl", "set-volume", (char *)target, value, NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+
+    GtkWidget *label = g_strcmp0(target, "@DEFAULT_AUDIO_SINK@") == 0
+        ? st->sound_output_label : st->sound_input_label;
+    const char *old_text = gtk_label_get_text(GTK_LABEL(label));
+    const char *separator = g_strrstr(old_text, " · ");
+    char *new_text = separator
+        ? g_strdup_printf("%.*s · %s", (int)(separator - old_text), old_text, value)
+        : g_strdup_printf("%s · %s", old_text, value);
+    gtk_label_set_text(GTK_LABEL(label), new_text);
+    g_free(new_text);
+}
+
+static gboolean on_sound_enabled_changed(GtkSwitch *widget, gboolean state,
+    gpointer user_data) {
+    (void)widget;
+    State *st = user_data;
+    if (st->sound_loading) return FALSE;
+    const char *target = g_object_get_data(G_OBJECT(widget), "audio-target");
+    if (!target) return FALSE;
+    char *argv[] = {
+        "wpctl", "set-mute", (char *)target, state ? "0" : "1", NULL
+    };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    return FALSE;
+}
+
+static void on_sound_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_sound(user_data);
+}
+
+static char *read_battery_status(void) {
+    GDir *dir = g_dir_open("/sys/class/power_supply", 0, NULL);
+    if (!dir) return g_strdup("Данные батареи недоступны");
+    const char *entry;
+    char *result = NULL;
+    while ((entry = g_dir_read_name(dir)) != NULL) {
+        char *base = g_build_filename("/sys/class/power_supply", entry, NULL);
+        char *type_path = g_build_filename(base, "type", NULL);
+        char *type = NULL;
+        g_file_get_contents(type_path, &type, NULL, NULL);
+        g_free(type_path);
+        if (!type || !g_str_has_prefix(type, "Battery")) {
+            g_free(type);
+            g_free(base);
+            continue;
+        }
+        g_free(type);
+        char *capacity_path = g_build_filename(base, "capacity", NULL);
+        char *status_path = g_build_filename(base, "status", NULL);
+        char *capacity = NULL, *status = NULL;
+        g_file_get_contents(capacity_path, &capacity, NULL, NULL);
+        g_file_get_contents(status_path, &status, NULL, NULL);
+        if (capacity) g_strstrip(capacity);
+        if (status) g_strstrip(status);
+        const char *translated = "Состояние неизвестно";
+        if (g_strcmp0(status, "Charging") == 0) translated = "Заряжается";
+        else if (g_strcmp0(status, "Discharging") == 0) translated = "Разряжается";
+        else if (g_strcmp0(status, "Full") == 0) translated = "Полностью заряжена";
+        else if (g_strcmp0(status, "Not charging") == 0) translated = "Не заряжается";
+        result = g_strdup_printf("%s%% · %s", capacity ? capacity : "?", translated);
+        g_free(capacity);
+        g_free(status);
+        g_free(capacity_path);
+        g_free(status_path);
+        g_free(base);
+        break;
+    }
+    g_dir_close(dir);
+    return result ? result : g_strdup("Батарея не обнаружена");
+}
+
+static void refresh_power(State *st) {
+    static const char *profiles[] = { "power-saver", "balanced", "performance" };
+    char *get_argv[] = { "powerprofilesctl", "get", NULL };
+    char *current = run_command_capture(get_argv);
+    g_strstrip(current);
+    char *list_argv[] = { "powerprofilesctl", "list", NULL };
+    char *available = run_command_capture(list_argv);
+
+    const char *current_label = "Служба профилей питания недоступна";
+    if (g_strcmp0(current, "power-saver") == 0) current_label = "Экономия энергии";
+    else if (g_strcmp0(current, "balanced") == 0) current_label = "Сбалансированный";
+    else if (g_strcmp0(current, "performance") == 0) current_label = "Производительность";
+    gtk_label_set_text(GTK_LABEL(st->power_profile_label), current_label);
+
+    for (guint i = 0; i < 3; i++) {
+        gtk_widget_remove_css_class(st->power_profile_buttons[i], "ps-btn-primary");
+        gtk_widget_add_css_class(st->power_profile_buttons[i], "ps-btn");
+        gtk_widget_set_sensitive(st->power_profile_buttons[i],
+            strstr(available, profiles[i]) != NULL);
+        if (g_strcmp0(current, profiles[i]) == 0) {
+            gtk_widget_remove_css_class(st->power_profile_buttons[i], "ps-btn");
+            gtk_widget_add_css_class(st->power_profile_buttons[i], "ps-btn-primary");
+        }
+    }
+    char *battery = read_battery_status();
+    gtk_label_set_text(GTK_LABEL(st->power_status_label), battery);
+    g_free(battery);
+    g_free(current);
+    g_free(available);
+}
+
+static void on_power_profile(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    const char *profile = g_object_get_data(G_OBJECT(button), "power-profile");
+    if (!profile) return;
+    char *argv[] = { "powerprofilesctl", "set", (char *)profile, NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    refresh_power(st);
+}
+
+static void on_power_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_power(user_data);
+}
+
 static char *read_os_pretty_name(void) {
     FILE *f = fopen("/etc/os-release", "r");
     if (!f) return g_strdup("Linux");
@@ -1512,6 +1742,141 @@ static GtkWidget *build_displays_page(State *st) {
     st->display_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->display_list);
     refresh_displays(st);
+    return scroll;
+}
+
+static GtkWidget *make_sound_card(State *st, const char *icon_text,
+    const char *title_text, const char *target, GtkWidget **scale_out,
+    GtkWidget **switch_out, GtkWidget **label_out) {
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(card, "ps-card");
+    GtkWidget *head = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *icon = gtk_label_new(icon_text);
+    gtk_widget_add_css_class(icon, "ps-tool-icon");
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *title = gtk_label_new(title_text);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *status = gtk_label_new("Проверка устройства…");
+    gtk_widget_add_css_class(status, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+    GtkWidget *enabled = gtk_switch_new();
+    gtk_widget_set_valign(enabled, GTK_ALIGN_CENTER);
+    g_object_set_data(G_OBJECT(enabled), "audio-target", (gpointer)target);
+    g_signal_connect(enabled, "state-set",
+        G_CALLBACK(on_sound_enabled_changed), st);
+    gtk_box_append(GTK_BOX(text), title);
+    gtk_box_append(GTK_BOX(text), status);
+    gtk_box_append(GTK_BOX(head), icon);
+    gtk_box_append(GTK_BOX(head), text);
+    gtk_box_append(GTK_BOX(head), enabled);
+    gtk_box_append(GTK_BOX(card), head);
+
+    GtkWidget *scale = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, 0.0, 150.0, 1.0);
+    gtk_scale_set_draw_value(GTK_SCALE(scale), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(scale), GTK_POS_RIGHT);
+    gtk_widget_set_hexpand(scale, TRUE);
+    g_object_set_data(G_OBJECT(scale), "audio-target", (gpointer)target);
+    g_signal_connect(scale, "value-changed",
+        G_CALLBACK(on_sound_volume_changed), st);
+    gtk_box_append(GTK_BOX(card), scale);
+    *scale_out = scale;
+    *switch_out = enabled;
+    *label_out = status;
+    return card;
+}
+
+static GtkWidget *build_sound_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Звук"));
+
+    gtk_box_append(GTK_BOX(box), make_sound_card(st, "󰕾", "Вывод звука",
+        "@DEFAULT_AUDIO_SINK@", &st->sound_output_scale,
+        &st->sound_output_enabled, &st->sound_output_label));
+    gtk_box_append(GTK_BOX(box), make_sound_card(st, "󰍬", "Микрофон",
+        "@DEFAULT_AUDIO_SOURCE@", &st->sound_input_scale,
+        &st->sound_input_enabled, &st->sound_input_label));
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn-primary");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_sound_refresh), st);
+    GtkWidget *mixer = gtk_button_new_with_label("Расширенный микшер");
+    gtk_widget_add_css_class(mixer, "ps-btn");
+    g_object_set_data(G_OBJECT(mixer), "tool-cmd", "pavucontrol");
+    g_signal_connect(mixer, "clicked", G_CALLBACK(on_launch_tool), NULL);
+    gtk_box_append(GTK_BOX(actions), refresh);
+    gtk_box_append(GTK_BOX(actions), mixer);
+    gtk_box_append(GTK_BOX(box), actions);
+    refresh_sound(st);
+    return scroll;
+}
+
+static GtkWidget *build_power_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Питание"));
+
+    GtkWidget *battery_card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(battery_card, "ps-card");
+    GtkWidget *battery_icon = gtk_label_new("󰁹");
+    gtk_widget_add_css_class(battery_icon, "ps-tool-icon");
+    GtkWidget *battery_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    GtkWidget *battery_title = gtk_label_new("Батарея");
+    gtk_widget_add_css_class(battery_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(battery_title), 0.0f);
+    st->power_status_label = gtk_label_new("Проверка состояния…");
+    gtk_widget_add_css_class(st->power_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->power_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(battery_text), battery_title);
+    gtk_box_append(GTK_BOX(battery_text), st->power_status_label);
+    gtk_box_append(GTK_BOX(battery_card), battery_icon);
+    gtk_box_append(GTK_BOX(battery_card), battery_text);
+    gtk_box_append(GTK_BOX(box), battery_card);
+
+    GtkWidget *profile_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(profile_card, "ps-card");
+    GtkWidget *profile_title = gtk_label_new("Профиль энергопотребления");
+    gtk_widget_add_css_class(profile_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(profile_title), 0.0f);
+    st->power_profile_label = gtk_label_new("Проверка профилей…");
+    gtk_widget_add_css_class(st->power_profile_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->power_profile_label), 0.0f);
+    gtk_box_append(GTK_BOX(profile_card), profile_title);
+    gtk_box_append(GTK_BOX(profile_card), st->power_profile_label);
+    GtkWidget *profiles = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    const char *profile_ids[] = { "power-saver", "balanced", "performance" };
+    const char *profile_labels[] = {
+        "Экономия энергии", "Сбалансированный", "Производительность"
+    };
+    for (guint i = 0; i < 3; i++) {
+        GtkWidget *button = gtk_button_new_with_label(profile_labels[i]);
+        g_object_set_data(G_OBJECT(button), "power-profile",
+            (gpointer)profile_ids[i]);
+        g_signal_connect(button, "clicked", G_CALLBACK(on_power_profile), st);
+        st->power_profile_buttons[i] = button;
+        gtk_box_append(GTK_BOX(profiles), button);
+    }
+    gtk_box_append(GTK_BOX(profile_card), profiles);
+    gtk_box_append(GTK_BOX(box), profile_card);
+
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn-primary");
+    gtk_widget_set_halign(refresh, GTK_ALIGN_START);
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_power_refresh), st);
+    gtk_box_append(GTK_BOX(box), refresh);
+    refresh_power(st);
     return scroll;
 }
 
@@ -1917,11 +2282,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_stack_add_named(GTK_STACK(st->stack), build_network_page(st), "network");
     gtk_stack_add_named(GTK_STACK(st->stack), build_bluetooth_page(st), "bluetooth");
     gtk_stack_add_named(GTK_STACK(st->stack), build_displays_page(st), "displays");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
-        "Звук", "󰕾", "Звуковые устройства",
-        "Громкость, устройства вывода, микрофоны и уровни приложений.", "pavucontrol"), "sound");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Питание", "󰁹", "Профили производительности, сон и поведение кнопки питания."), "power");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_sound_page(st), "sound");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_power_page(st), "power");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
         "Многозадачность", "󰕮", "Рабочие столы, привязка окон и переключение задач."), "multitasking");
     gtk_stack_add_named(GTK_STACK(st->stack), build_appearance_page(st), "appearance");
