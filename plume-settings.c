@@ -90,6 +90,13 @@ typedef struct {
     GtkWidget *dd_toggle;
     GtkWidget *kbd_status_lbl;
     gboolean loading;
+
+    /* Сеть */
+    GtkWidget *wifi_switch;
+    GtkWidget *wifi_status_lbl;
+    GtkWidget *wifi_list;
+    GtkWidget *network_list;
+    gboolean network_loading;
 } State;
 
 static char *get_plume_root(void) {
@@ -912,6 +919,183 @@ static GtkWidget *make_info_row(const char *key, const char *val) {
     return row;
 }
 
+static char *run_command_capture(char *const argv[]) {
+    char *out = NULL;
+    char *err = NULL;
+    int status = 0;
+    GError *error = NULL;
+    gboolean ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+        NULL, NULL, &out, &err, &status, &error);
+    if (!ok) {
+        g_clear_error(&error);
+        g_free(out);
+        out = g_strdup("");
+    }
+    g_free(err);
+    return out ? out : g_strdup("");
+}
+
+static void clear_box(GtkWidget *box) {
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(box)) != NULL)
+        gtk_box_remove(GTK_BOX(box), child);
+}
+
+static GtkWidget *make_network_row(const char *icon_text, const char *title,
+    const char *details, gboolean active) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_add_css_class(row, "ps-card");
+
+    GtkWidget *icon = gtk_label_new(icon_text);
+    gtk_widget_add_css_class(icon, "ps-tool-icon");
+    gtk_box_append(GTK_BOX(row), icon);
+
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *name = gtk_label_new(title);
+    gtk_widget_add_css_class(name, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(name), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(name), PANGO_ELLIPSIZE_END);
+    GtkWidget *info = gtk_label_new(details);
+    gtk_widget_add_css_class(info, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(info), 0.0f);
+    gtk_box_append(GTK_BOX(text), name);
+    gtk_box_append(GTK_BOX(text), info);
+    gtk_box_append(GTK_BOX(row), text);
+
+    if (active) {
+        GtkWidget *badge = gtk_label_new("Подключено");
+        gtk_widget_add_css_class(badge, "ps-card-title");
+        gtk_box_append(GTK_BOX(row), badge);
+    }
+    return row;
+}
+
+static void refresh_wifi(State *st) {
+    if (!st->wifi_list) return;
+    clear_box(st->wifi_list);
+
+    char *radio_argv[] = { "nmcli", "radio", "wifi", NULL };
+    char *radio = run_command_capture(radio_argv);
+    g_strstrip(radio);
+    gboolean enabled = (g_strcmp0(radio, "enabled") == 0);
+    st->network_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->wifi_switch), enabled);
+    st->network_loading = FALSE;
+    gtk_label_set_text(GTK_LABEL(st->wifi_status_lbl),
+        enabled ? "Wi-Fi включён" : "Wi-Fi выключен");
+    g_free(radio);
+
+    if (!enabled) {
+        GtkWidget *empty = gtk_label_new("Включи Wi-Fi, чтобы увидеть доступные сети.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->wifi_list), empty);
+        return;
+    }
+
+    char *list_argv[] = {
+        "nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+        "device", "wifi", "list", "--rescan", "yes", NULL
+    };
+    char *output = run_command_capture(list_argv);
+    char **lines = g_strsplit(output, "\n", -1);
+    guint count = 0;
+    for (guint i = 0; lines[i] && count < 30; i++) {
+        if (!lines[i][0]) continue;
+        char **fields = g_strsplit(lines[i], ":", 4);
+        if (!fields[0] || !fields[1]) {
+            g_strfreev(fields);
+            continue;
+        }
+        gboolean active = (g_strcmp0(fields[0], "*") == 0);
+        const char *ssid = fields[1][0] ? fields[1] : "Скрытая сеть";
+        const char *signal = fields[2] ? fields[2] : "?";
+        const char *security = (fields[3] && fields[3][0]) ? fields[3] : "Открытая сеть";
+        char *details = g_strdup_printf("Сигнал: %s%% · %s", signal, security);
+        gtk_box_append(GTK_BOX(st->wifi_list),
+            make_network_row(active ? "󰤨" : "󰤯", ssid, details, active));
+        g_free(details);
+        g_strfreev(fields);
+        count++;
+    }
+    if (!count) {
+        GtkWidget *empty = gtk_label_new("Доступные сети не найдены.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->wifi_list), empty);
+    }
+    g_strfreev(lines);
+    g_free(output);
+}
+
+static void refresh_network(State *st) {
+    if (!st->network_list) return;
+    clear_box(st->network_list);
+    char *argv[] = {
+        "nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION",
+        "device", "status", NULL
+    };
+    char *output = run_command_capture(argv);
+    char **lines = g_strsplit(output, "\n", -1);
+    guint count = 0;
+    for (guint i = 0; lines[i]; i++) {
+        if (!lines[i][0]) continue;
+        char **fields = g_strsplit(lines[i], ":", 4);
+        if (!fields[0] || !fields[1]) {
+            g_strfreev(fields);
+            continue;
+        }
+        const char *state = fields[2] ? fields[2] : "неизвестно";
+        const char *connection = (fields[3] && fields[3][0]) ? fields[3] : "Нет подключения";
+        gboolean active = g_str_has_prefix(state, "connected") ||
+            g_str_has_prefix(state, "подключ");
+        const char *icon = "󰒍";
+        if (g_strcmp0(fields[1], "ethernet") == 0) icon = "󰈀";
+        else if (g_strcmp0(fields[1], "wifi") == 0) icon = "󰤨";
+        else if (g_strcmp0(fields[1], "bridge") == 0) icon = "󰘘";
+        else if (g_strcmp0(fields[1], "wireguard") == 0 ||
+                 g_strcmp0(fields[1], "tun") == 0) icon = "󰖂";
+        char *details = g_strdup_printf("%s · %s · %s",
+            fields[1], state, connection);
+        gtk_box_append(GTK_BOX(st->network_list),
+            make_network_row(icon, fields[0], details, active));
+        g_free(details);
+        g_strfreev(fields);
+        count++;
+    }
+    if (!count) {
+        GtkWidget *empty = gtk_label_new("NetworkManager не вернул список устройств.");
+        gtk_widget_add_css_class(empty, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.0f);
+        gtk_box_append(GTK_BOX(st->network_list), empty);
+    }
+    g_strfreev(lines);
+    g_free(output);
+}
+
+static gboolean on_wifi_state_set(GtkSwitch *widget, gboolean state,
+    gpointer user_data) {
+    (void)widget;
+    State *st = user_data;
+    if (st->network_loading) return FALSE;
+    char *argv[] = { "nmcli", "radio", "wifi", state ? "on" : "off", NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+    refresh_wifi(st);
+    return TRUE;
+}
+
+static void on_wifi_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_wifi(user_data);
+}
+
+static void on_network_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_network(user_data);
+}
+
 static char *read_os_pretty_name(void) {
     FILE *f = fopen("/etc/os-release", "r");
     if (!f) return g_strdup("Linux");
@@ -932,6 +1116,86 @@ static char *read_os_pretty_name(void) {
     }
     fclose(f);
     return res ? res : g_strdup("Linux");
+}
+
+static GtkWidget *build_wifi_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Wi-Fi"));
+
+    GtkWidget *radio_card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(radio_card, "ps-card");
+    GtkWidget *radio_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(radio_text, TRUE);
+    GtkWidget *radio_title = gtk_label_new("Беспроводная сеть");
+    gtk_widget_add_css_class(radio_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(radio_title), 0.0f);
+    st->wifi_status_lbl = gtk_label_new("Проверка состояния…");
+    gtk_widget_add_css_class(st->wifi_status_lbl, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->wifi_status_lbl), 0.0f);
+    gtk_box_append(GTK_BOX(radio_text), radio_title);
+    gtk_box_append(GTK_BOX(radio_text), st->wifi_status_lbl);
+    st->wifi_switch = gtk_switch_new();
+    gtk_widget_set_valign(st->wifi_switch, GTK_ALIGN_CENTER);
+    g_signal_connect(st->wifi_switch, "state-set",
+        G_CALLBACK(on_wifi_state_set), st);
+    gtk_box_append(GTK_BOX(radio_card), radio_text);
+    gtk_box_append(GTK_BOX(radio_card), st->wifi_switch);
+    gtk_box_append(GTK_BOX(box), radio_card);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить список");
+    gtk_widget_add_css_class(refresh, "ps-btn-primary");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_wifi_refresh), st);
+    GtkWidget *editor = gtk_button_new_with_label("Дополнительные параметры");
+    gtk_widget_add_css_class(editor, "ps-btn");
+    g_object_set_data(G_OBJECT(editor), "tool-cmd", "nm-connection-editor");
+    g_signal_connect(editor, "clicked", G_CALLBACK(on_launch_tool), NULL);
+    gtk_box_append(GTK_BOX(actions), refresh);
+    gtk_box_append(GTK_BOX(actions), editor);
+    gtk_box_append(GTK_BOX(box), actions);
+
+    st->wifi_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_append(GTK_BOX(box), st->wifi_list);
+    refresh_wifi(st);
+    return scroll;
+}
+
+static GtkWidget *build_network_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Сеть"));
+
+    GtkWidget *description = gtk_label_new(
+        "Сетевые устройства и активные подключения NetworkManager.");
+    gtk_widget_add_css_class(description, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(description), 0.0f);
+    gtk_box_append(GTK_BOX(box), description);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn-primary");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_network_refresh), st);
+    GtkWidget *editor = gtk_button_new_with_label("Изменить подключения");
+    gtk_widget_add_css_class(editor, "ps-btn");
+    g_object_set_data(G_OBJECT(editor), "tool-cmd", "nm-connection-editor");
+    g_signal_connect(editor, "clicked", G_CALLBACK(on_launch_tool), NULL);
+    gtk_box_append(GTK_BOX(actions), refresh);
+    gtk_box_append(GTK_BOX(actions), editor);
+    gtk_box_append(GTK_BOX(box), actions);
+
+    st->network_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_append(GTK_BOX(box), st->network_list);
+    refresh_network(st);
+    return scroll;
 }
 
 static GtkWidget *build_appearance_page(State *st) {
@@ -1332,12 +1596,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_hexpand(st->stack, TRUE);
     gtk_widget_set_vexpand(st->stack, TRUE);
 
-    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
-        "Wi-Fi", "󰤨", "Беспроводные сети",
-        "Подключение, сохранённые сети и параметры Wi-Fi.", "nm-connection-editor"), "wifi");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
-        "Сеть", "󰈀", "Сетевые подключения",
-        "Проводные соединения, VPN, мосты и дополнительные параметры.", "nm-connection-editor"), "network");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_wifi_page(st), "wifi");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_network_page(st), "network");
     gtk_stack_add_named(GTK_STACK(st->stack), build_tool_page(
         "Bluetooth", "󰂯", "Устройства Bluetooth",
         "Поиск, подключение и управление Bluetooth-устройствами.", "blueman-manager"), "bluetooth");
