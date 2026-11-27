@@ -143,3 +143,27 @@ scrollbar slider {
   min-width: 6px;
   min-height: 6px;
 }
+
+/* Plume window controls for GTK3 client decorations. */
+headerbar button.titlebutton, .titlebar button.titlebutton {
+  background-image: none;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  color: #edf0f5;
+}
+headerbar button.titlebutton:hover, .titlebar button.titlebutton:hover {
+  background-color: #1c212b;
+  border-color: #2b3342;
+}
+headerbar button.titlebutton.close:hover, .titlebar button.titlebutton.close:hover {
+  background-color: #e04f3e;
+  border-color: #e04f3e;
+  color: #ffffff;
+}
+
+window.csd, window.csd decoration, window.csd headerbar,
+window.csd .titlebar, window.csd .background {
+  border-radius: 0;
+}

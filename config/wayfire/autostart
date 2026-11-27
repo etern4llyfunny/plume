@@ -3,8 +3,13 @@ ROOT="${PLUME_ROOT:-/usr/share/plume}"
 RT="${PLUME_RUNTIME:-$ROOT/config}"
 PIDS="$RT/pids"
 
-if [ "${PLUME_NESTED:-0}" != "1" ] && command -v dbus-update-activation-environment >/dev/null 2>&1; then
-  dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE GTK_THEME 2>/dev/null || true
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  if [ "${PLUME_NESTED:-0}" != "1" ]; then
+    dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE GTK_THEME GTK_CSD GSETTINGS_BACKEND XDG_DATA_DIRS 2>/dev/null || true
+  elif [ "${PLUME_PRIVATE_DBUS:-0}" = "1" ]; then
+    # The nested launcher provides its own bus; do not update GNOME's systemd environment.
+    dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE GTK_THEME GTK_CSD GSETTINGS_BACKEND XDG_DATA_DIRS 2>/dev/null || true
+  fi
 fi
 
 USER_WALL=""

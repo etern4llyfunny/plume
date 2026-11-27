@@ -73,3 +73,26 @@ entry {
 entry:focus-within {
   border-color: #2f7fe6;
 }
+
+/* Plume window controls for GTK4 client decorations. */
+headerbar windowcontrols > button, .titlebar windowcontrols > button {
+  background-image: none;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  color: #edf0f5;
+}
+headerbar windowcontrols > button:hover, .titlebar windowcontrols > button:hover {
+  background-color: #1c212b;
+  border-color: #2b3342;
+}
+headerbar windowcontrols > button.close:hover, .titlebar windowcontrols > button.close:hover {
+  background-color: #e04f3e;
+  border-color: #e04f3e;
+  color: #ffffff;
+}
+
+window.csd, window.csd headerbar, window.csd .titlebar {
+  border-radius: 0;
+}

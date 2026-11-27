@@ -222,6 +222,10 @@ window, .background {{
   background-color: {p['bg']};
   color: {p['fg']};
 }}
+window.csd, window.csd decoration, window.csd headerbar,
+window.csd .titlebar, window.csd .background {{
+  border-radius: 0;
+}}
 menubar, toolbar, headerbar, .titlebar {{
   background-color: {p['bg_alt']};
   background-image: none;
@@ -261,6 +265,24 @@ button {{
 }}
 button:hover {{
   border-color: {p['accent']};
+}}
+/* Flat Plume controls for client-decorated GTK3 windows. */
+headerbar button.titlebutton, .titlebar button.titlebutton {{
+  background-image: none;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  color: {p['fg']};
+}}
+headerbar button.titlebutton:hover, .titlebar button.titlebutton:hover {{
+  background-color: {p['bg_hover']};
+  border-color: {p['border_strong']};
+}}
+headerbar button.titlebutton.close:hover, .titlebar button.titlebutton.close:hover {{
+  background-color: #e04f3e;
+  border-color: #e04f3e;
+  color: #ffffff;
 }}
 notebook > header {{
   background-color: {p['bg_alt']};
@@ -309,6 +331,9 @@ window, window.background {{
   background-color: {p['bg']};
   color: {p['fg']};
 }}
+window.csd, window.csd headerbar, window.csd .titlebar {{
+  border-radius: 0;
+}}
 headerbar, .titlebar {{
   background-color: {p['bg_alt']};
   background-image: none;
@@ -337,6 +362,24 @@ button {{
 }}
 button:hover {{
   border-color: {p['accent']};
+}}
+/* GTK4 controls: square corners and a restrained hover state. */
+headerbar windowcontrols > button, .titlebar windowcontrols > button {{
+  background-image: none;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  color: {p['fg']};
+}}
+headerbar windowcontrols > button:hover, .titlebar windowcontrols > button:hover {{
+  background-color: {p['bg_hover']};
+  border-color: {p['border_strong']};
+}}
+headerbar windowcontrols > button.close:hover, .titlebar windowcontrols > button.close:hover {{
+  background-color: #e04f3e;
+  border-color: #e04f3e;
+  color: #ffffff;
 }}
 entry {{
   background-color: {p['bg_alt']};

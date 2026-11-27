@@ -1,13 +1,14 @@
 pkgname=plume
 pkgver=0.1.0beta1
 _tag=v0.1.0-beta1
-pkgrel=2
+pkgrel=3
 pkgdesc='Plume — лёгкое рабочее окружение Wayland (Wayfire + C/GTK4)'
 arch=('x86_64')
 url='https://github.com/etern4llyfunny/plume'
 license=('GPL-3.0-or-later')
 depends=(
   'wayfire'
+  'plume-gtkdecor'
   'waybar'
   'mako'
   'swaybg'

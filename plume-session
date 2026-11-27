@@ -46,11 +46,49 @@ done
 [ -n "$XKB_LAYOUT" ] || XKB_LAYOUT="us,ru"
 [ -n "$XKB_OPTIONS" ] || XKB_OPTIONS="grp:alt_shift_toggle"
 
+MOUSE_CFG="$HOME/.config/plume/mouse.ini"
+read_mouse_pref() {
+  key="$1"
+  fallback="$2"
+  value=""
+  if [ -f "$MOUSE_CFG" ]; then
+    value="$(sed -n "s/^${key}=//p" "$MOUSE_CFG" | head -n 1 | tr -d ' ')"
+  fi
+  [ -n "$value" ] || value="$fallback"
+  printf '%s' "$value"
+}
+
+MOUSE_CURSOR_SPEED="$(read_mouse_pref mouse_cursor_speed 0.0)"
+MOUSE_SCROLL_SPEED="$(read_mouse_pref mouse_scroll_speed 1.0)"
+TOUCHPAD_CURSOR_SPEED="$(read_mouse_pref touchpad_cursor_speed 0.0)"
+TOUCHPAD_SCROLL_SPEED="$(read_mouse_pref touchpad_scroll_speed 1.0)"
+NATURAL_SCROLL="$(read_mouse_pref natural_scroll false)"
+TAP_TO_CLICK="$(read_mouse_pref tap_to_click true)"
+DISABLE_TOUCHPAD_WHILE_TYPING="$(read_mouse_pref disable_touchpad_while_typing true)"
+
 sed \
   -e "s|@XKB_LAYOUT@|$XKB_LAYOUT|g" \
   -e "s|@XKB_OPTIONS@|$XKB_OPTIONS|g" \
+  -e "s|@MOUSE_CURSOR_SPEED@|$MOUSE_CURSOR_SPEED|g" \
+  -e "s|@TOUCHPAD_CURSOR_SPEED@|$TOUCHPAD_CURSOR_SPEED|g" \
+  -e "s|@NATURAL_SCROLL@|$NATURAL_SCROLL|g" \
+  -e "s|@TAP_TO_CLICK@|$TAP_TO_CLICK|g" \
+  -e "s|@DISABLE_TOUCHPAD_WHILE_TYPING@|$DISABLE_TOUCHPAD_WHILE_TYPING|g" \
   -e "s|@AUTOSTART@|$ROOT/config/wayfire/autostart|g" \
   "$ROOT/config/wayfire/wayfire.ini" > "$RT_DIR/wayfire/wayfire.ini"
+
+set_input_option() {
+  key="$1"
+  value="$2"
+  file="$RT_DIR/wayfire/wayfire.ini"
+  if grep -q "^${key}[[:space:]]*=" "$file"; then
+    sed -i -E "s|^${key}[[:space:]]*=.*$|${key} = ${value}|" "$file"
+  else
+    sed -i "/^\[input\]$/a ${key} = ${value}" "$file"
+  fi
+}
+set_input_option mouse_scroll_speed "$MOUSE_SCROLL_SPEED"
+set_input_option touchpad_scroll_speed "$TOUCHPAD_SCROLL_SPEED"
 
 sed -e "s|/usr/share/plume/assets/plume-logo-clean.svg|$RT_DIR/waybar/plume-logo.svg|g" -e "s|/usr/share/plume|$ROOT|g" "$ROOT/config/waybar/config.jsonc" > "$RT_DIR/waybar/config.jsonc"
 
@@ -62,6 +100,15 @@ export XDG_CURRENT_DESKTOP="Plume:wayfire:wlroots"
 export XDG_SESSION_DESKTOP="Plume"
 export DESKTOP_SESSION="plume"
 export XDG_SESSION_TYPE="wayland"
+# Let Wayfire draw the same window controls for regular GTK3/GTK4 windows.
+# Applications with a custom headerbar retain their own controls by design.
+export GTK_CSD=0
+# Keep GTK button layout scoped to Plume, without changing GNOME's dconf.
+export GSETTINGS_BACKEND=keyfile
+if command -v gsettings >/dev/null 2>&1 &&
+   gsettings list-schemas | grep -qx 'org.gnome.desktop.wm.preferences'; then
+  gsettings set org.gnome.desktop.wm.preferences button-layout ':minimize,maximize,close' || true
+fi
 export GTK_THEME="Plume"
 export GSK_RENDERER="gl"
 unset GDMSESSION GNOME_DESKTOP_SESSION_ID

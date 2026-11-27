@@ -139,6 +139,23 @@ typedef struct {
     GtkWidget *search_descriptions_switch;
     GtkWidget *search_commands_switch;
     gboolean search_loading;
+
+    /* Благополучие */
+    GtkWidget *wellbeing_switch;
+    GtkWidget *wellbeing_interval;
+    GtkWidget *wellbeing_status_label;
+    gboolean wellbeing_loading;
+
+    /* Мышь и сенсорная панель */
+    GtkWidget *mouse_speed_scale;
+    GtkWidget *mouse_scroll_scale;
+    GtkWidget *touchpad_speed_scale;
+    GtkWidget *touchpad_scroll_scale;
+    GtkWidget *natural_scroll_switch;
+    GtkWidget *tap_to_click_switch;
+    GtkWidget *disable_while_typing_switch;
+    GtkWidget *mouse_status_label;
+    gboolean mouse_loading;
 } State;
 
 static char *get_plume_root(void) {
@@ -317,7 +334,9 @@ static void apply_window_css(State *st) {
         "  background-color: %s; background-image: none;"
         "  border: 1px solid %s; border-radius: 5px; box-shadow: none;"
         "}"
-        "window.plume-settings-win switch:checked {"
+        "window.plume-settings-win switch:checked,"
+        "window.plume-settings-win switch:checked:hover,"
+        "window.plume-settings-win switch:checked:active {"
         "  background-color: %s; background-image: none; border-color: %s;"
         "}"
         "window.plume-settings-win switch slider {"
@@ -325,9 +344,35 @@ static void apply_window_css(State *st) {
         "  background-color: %s; background-image: none;"
         "  border: 0; border-radius: 3px; box-shadow: none;"
         "}"
+        "window.plume-settings-win switch:checked slider {"
+        "  background-color: #ffffff; background-image: none;"
+        "}"
         "window.plume-settings-win switch:disabled { opacity: 0.45; }"
         ".ps-source-fixed { color: %s; font-size: 12px; font-weight: 600; }",
         bg_hover, border_s, st->accent, st->accent, fg, st->accent
+    );
+
+    g_string_append_printf(css,
+        "window.plume-settings-win scale trough {"
+        "  min-height: 4px; min-width: 4px;"
+        "  background: %s; background-image: none;"
+        "  border: 0; border-radius: 2px; box-shadow: none;"
+        "}"
+        "window.plume-settings-win scale highlight {"
+        "  min-height: 4px; min-width: 4px;"
+        "  background: %s; background-image: none;"
+        "  border: 0; border-radius: 2px; box-shadow: none;"
+        "}"
+        "window.plume-settings-win scale slider {"
+        "  min-width: 14px; min-height: 14px; margin: -5px;"
+        "  background: #ffffff; background-image: none;"
+        "  border: 2px solid %s; border-radius: 9px; box-shadow: none;"
+        "}"
+        "window.plume-settings-win scale slider:hover {"
+        "  background: #ffffff; background-image: none;"
+        "  border-color: %s; box-shadow: none;"
+        "}",
+        border_s, st->accent, st->accent, acc_hover
     );
 
     for (int i = 0; i < N_ACCENTS; i++) {
@@ -909,6 +954,17 @@ static void load_keyboard_prefs(State *st) {
 
 /* ==================== Общие виджеты и страницы ==================== */
 
+static void refresh_wifi(State *st);
+static void refresh_network(State *st);
+static void refresh_bluetooth(State *st);
+static void refresh_displays(State *st);
+static void refresh_sound(State *st);
+static void refresh_power(State *st);
+static void refresh_workspaces(State *st);
+static void refresh_applications(State *st);
+static void refresh_notifications(State *st);
+static void refresh_wellbeing_status(State *st);
+
 static void on_launch_tool(GtkButton *btn, gpointer user_data) {
     (void)user_data;
     const char *cmd = g_object_get_data(G_OBJECT(btn), "tool-cmd");
@@ -924,7 +980,18 @@ static void on_nav_selected(GtkListBox *box, GtkListBoxRow *row, gpointer user_d
     if (!row) return;
     State *st = user_data;
     const char *page = g_object_get_data(G_OBJECT(row), "page-id");
-    if (page) gtk_stack_set_visible_child_name(GTK_STACK(st->stack), page);
+    if (!page) return;
+    gtk_stack_set_visible_child_name(GTK_STACK(st->stack), page);
+    if (g_strcmp0(page, "wifi") == 0) refresh_wifi(st);
+    else if (g_strcmp0(page, "network") == 0) refresh_network(st);
+    else if (g_strcmp0(page, "bluetooth") == 0) refresh_bluetooth(st);
+    else if (g_strcmp0(page, "displays") == 0) refresh_displays(st);
+    else if (g_strcmp0(page, "sound") == 0) refresh_sound(st);
+    else if (g_strcmp0(page, "power") == 0) refresh_power(st);
+    else if (g_strcmp0(page, "multitasking") == 0) refresh_workspaces(st);
+    else if (g_strcmp0(page, "applications") == 0) refresh_applications(st);
+    else if (g_strcmp0(page, "notifications") == 0) refresh_notifications(st);
+    else if (g_strcmp0(page, "wellbeing") == 0) refresh_wellbeing_status(st);
 }
 
 static GtkWidget *make_section_title(const char *text) {
@@ -1144,7 +1211,7 @@ static gboolean on_wifi_state_set(GtkSwitch *widget, gboolean state,
     char *ignored = run_command_capture(argv);
     g_free(ignored);
     refresh_wifi(st);
-    return TRUE;
+    return FALSE;
 }
 
 static void on_wifi_refresh(GtkButton *button, gpointer user_data) {
@@ -1233,7 +1300,7 @@ static gboolean on_bluetooth_state_set(GtkSwitch *widget, gboolean state,
     char *ignored = run_command_capture(argv);
     g_free(ignored);
     refresh_bluetooth(st);
-    return TRUE;
+    return FALSE;
 }
 
 static void on_bluetooth_refresh(GtkButton *button, gpointer user_data) {
@@ -1640,8 +1707,11 @@ static void on_workspace_refresh(GtkButton *button, gpointer user_data) {
 static void on_settings_active_changed(GObject *object, GParamSpec *pspec,
     gpointer user_data) {
     (void)pspec;
-    if (gtk_window_is_active(GTK_WINDOW(object)))
-        refresh_workspaces(user_data);
+    State *st = user_data;
+    if (!gtk_window_is_active(GTK_WINDOW(object))) return;
+    const char *page = gtk_stack_get_visible_child_name(GTK_STACK(st->stack));
+    if (g_strcmp0(page, "multitasking") == 0)
+        refresh_workspaces(st);
 }
 
 static char *get_user_autostart_dir(void) {
@@ -2115,7 +2185,7 @@ static gboolean on_notifications_dnd_changed(GtkSwitch *widget,
     char *ignored = run_command_capture(argv);
     g_free(ignored);
     refresh_notifications(st);
-    return TRUE;
+    return FALSE;
 }
 
 static void on_notifications_test(GtkButton *button, gpointer user_data) {
@@ -2185,15 +2255,13 @@ static void save_search_prefs(State *st) {
     g_key_file_unref(key);
 }
 
-static gboolean on_search_source_changed(GtkSwitch *widget, gboolean state,
+static void on_search_source_changed(GObject *object, GParamSpec *pspec,
     gpointer user_data) {
+    (void)object;
+    (void)pspec;
     State *st = user_data;
-    if (st->search_loading) return FALSE;
-    st->search_loading = TRUE;
-    gtk_switch_set_active(widget, state);
-    st->search_loading = FALSE;
+    if (st->search_loading) return;
     save_search_prefs(st);
-    return TRUE;
 }
 
 static void on_search_reset(GtkButton *button, gpointer user_data) {
@@ -2204,6 +2272,278 @@ static void on_search_reset(GtkButton *button, gpointer user_data) {
     gtk_switch_set_active(GTK_SWITCH(st->search_commands_switch), FALSE);
     st->search_loading = FALSE;
     save_search_prefs(st);
+}
+
+/* ==================== Благополучие ==================== */
+
+static const guint WELLBEING_INTERVALS[] = { 20, 30, 45, 60 };
+
+static char *get_wellbeing_prefs_path(void) {
+    char *dir = get_config_dir();
+    char *path = g_build_filename(dir, "wellbeing.ini", NULL);
+    g_free(dir);
+    return path;
+}
+
+static void load_wellbeing_prefs(gboolean *enabled, guint *interval) {
+    *enabled = FALSE;
+    *interval = 30;
+    char *path = get_wellbeing_prefs_path();
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+        gboolean stored_enabled = g_key_file_get_boolean(
+            key, "Wellbeing", "enabled", &error);
+        if (!error) *enabled = stored_enabled;
+        g_clear_error(&error);
+        gint stored_interval = g_key_file_get_integer(
+            key, "Wellbeing", "interval_minutes", &error);
+        if (!error && stored_interval >= 5 && stored_interval <= 240)
+            *interval = (guint)stored_interval;
+        g_clear_error(&error);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void write_break_timer(guint interval) {
+    char *user_cfg = g_build_filename(g_get_user_config_dir(),
+        "systemd", "user", NULL);
+    g_mkdir_with_parents(user_cfg, 0755);
+    char *service_path = g_build_filename(user_cfg,
+        "plume-break-reminder.service", NULL);
+    char *timer_path = g_build_filename(user_cfg,
+        "plume-break-reminder.timer", NULL);
+    const char *service =
+        "[Unit]\nDescription=Plume break reminder\n\n"
+        "[Service]\nType=oneshot\n"
+        "ExecStart=/usr/bin/env notify-send -a Plume "
+        "'Пора сделать перерыв' 'Отведи взгляд от экрана, встань и немного разомнись.'\n";
+    char *timer = g_strdup_printf(
+        "[Unit]\nDescription=Plume periodic break reminder\n\n"
+        "[Timer]\nOnActiveSec=%umin\nOnUnitActiveSec=%umin\n"
+        "AccuracySec=30s\n\n[Install]\nWantedBy=timers.target\n",
+        interval, interval);
+    g_file_set_contents(service_path, service, -1, NULL);
+    g_file_set_contents(timer_path, timer, -1, NULL);
+    g_free(timer);
+    g_free(timer_path);
+    g_free(service_path);
+    g_free(user_cfg);
+}
+
+static void refresh_wellbeing_status(State *st) {
+    char *argv[] = { "systemctl", "--user", "is-active",
+        "plume-break-reminder.timer", NULL };
+    char *output = run_command_capture(argv);
+    gboolean active = g_str_has_prefix(output, "active");
+    gtk_label_set_text(GTK_LABEL(st->wellbeing_status_label), active
+        ? "Напоминания запущены"
+        : "Напоминания выключены");
+    g_free(output);
+}
+
+static void save_and_apply_wellbeing(State *st) {
+    gboolean enabled = gtk_switch_get_active(
+        GTK_SWITCH(st->wellbeing_switch));
+    guint selected = gtk_drop_down_get_selected(
+        GTK_DROP_DOWN(st->wellbeing_interval));
+    if (selected >= G_N_ELEMENTS(WELLBEING_INTERVALS)) selected = 1;
+    guint interval = WELLBEING_INTERVALS[selected];
+
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_boolean(key, "Wellbeing", "enabled", enabled);
+    g_key_file_set_integer(key, "Wellbeing", "interval_minutes", interval);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    char *path = get_wellbeing_prefs_path();
+    g_file_set_contents(path, data, length, NULL);
+    g_free(path);
+    g_free(data);
+    g_key_file_unref(key);
+
+    write_break_timer(interval);
+    char *reload_argv[] = { "systemctl", "--user", "daemon-reload", NULL };
+    char *ignored = run_command_capture(reload_argv);
+    g_free(ignored);
+    if (enabled) {
+        char *enable_argv[] = { "systemctl", "--user", "enable", "--now",
+            "plume-break-reminder.timer", NULL };
+        ignored = run_command_capture(enable_argv);
+        g_free(ignored);
+        char *restart_argv[] = { "systemctl", "--user", "restart",
+            "plume-break-reminder.timer", NULL };
+        ignored = run_command_capture(restart_argv);
+        g_free(ignored);
+    } else {
+        char *disable_argv[] = { "systemctl", "--user", "disable", "--now",
+            "plume-break-reminder.timer", NULL };
+        ignored = run_command_capture(disable_argv);
+        g_free(ignored);
+    }
+    refresh_wellbeing_status(st);
+}
+
+static void on_wellbeing_enabled(GObject *object, GParamSpec *pspec,
+    gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    State *st = user_data;
+    if (st->wellbeing_loading) return;
+    save_and_apply_wellbeing(st);
+}
+
+static void on_wellbeing_interval_changed(GObject *object,
+    GParamSpec *pspec, gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    State *st = user_data;
+    if (!st->wellbeing_loading) save_and_apply_wellbeing(st);
+}
+
+static void on_wellbeing_test(GtkButton *button, gpointer user_data) {
+    (void)button;
+    (void)user_data;
+    char *argv[] = { "notify-send", "-a", "Plume",
+        "Пора сделать перерыв",
+        "Отведи взгляд от экрана, встань и немного разомнись.", NULL };
+    char *ignored = run_command_capture(argv);
+    g_free(ignored);
+}
+
+/* ==================== Мышь и сенсорная панель ==================== */
+
+static char *get_mouse_prefs_path(void) {
+    char *dir = get_config_dir();
+    char *path = g_build_filename(dir, "mouse.ini", NULL);
+    g_free(dir);
+    return path;
+}
+
+static void load_mouse_prefs(double *mouse_speed, double *mouse_scroll_speed,
+    double *touchpad_speed, double *touchpad_scroll_speed,
+    gboolean *natural_scroll, gboolean *tap_to_click,
+    gboolean *disable_while_typing) {
+    *mouse_speed = 0.0;
+    *mouse_scroll_speed = 1.0;
+    *touchpad_speed = 0.0;
+    *touchpad_scroll_speed = 1.0;
+    *natural_scroll = FALSE;
+    *tap_to_click = TRUE;
+    *disable_while_typing = TRUE;
+    char *path = get_mouse_prefs_path();
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+#define READ_DOUBLE(name, target, low, high) do { \
+        double value = g_key_file_get_double(key, "Input", name, &error); \
+        if (!error) *(target) = CLAMP(value, low, high); \
+        g_clear_error(&error); \
+    } while (0)
+#define READ_BOOL(name, target) do { \
+        gboolean value = g_key_file_get_boolean(key, "Input", name, &error); \
+        if (!error) *(target) = value; \
+        g_clear_error(&error); \
+    } while (0)
+        READ_DOUBLE("mouse_cursor_speed", mouse_speed, -1.0, 1.0);
+        READ_DOUBLE("mouse_scroll_speed", mouse_scroll_speed, 0.1, 3.0);
+        READ_DOUBLE("touchpad_cursor_speed", touchpad_speed, -1.0, 1.0);
+        READ_DOUBLE("touchpad_scroll_speed", touchpad_scroll_speed, 0.1, 3.0);
+        READ_BOOL("natural_scroll", natural_scroll);
+        READ_BOOL("tap_to_click", tap_to_click);
+        READ_BOOL("disable_touchpad_while_typing", disable_while_typing);
+#undef READ_DOUBLE
+#undef READ_BOOL
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void apply_mouse_to_runtime(double mouse_speed, double mouse_scroll_speed,
+    double touchpad_speed, double touchpad_scroll_speed,
+    gboolean natural_scroll, gboolean tap_to_click,
+    gboolean disable_while_typing) {
+    const char *runtime = getenv("PLUME_RUNTIME");
+    if (!runtime || !*runtime) return;
+    char *path = g_build_filename(runtime, "wayfire", "wayfire.ini", NULL);
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path,
+        G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS, NULL)) {
+        g_key_file_set_double(key, "input", "mouse_cursor_speed", mouse_speed);
+        g_key_file_set_double(key, "input", "mouse_scroll_speed",
+            mouse_scroll_speed);
+        g_key_file_set_double(key, "input", "touchpad_cursor_speed", touchpad_speed);
+        g_key_file_set_double(key, "input", "touchpad_scroll_speed",
+            touchpad_scroll_speed);
+        g_key_file_set_boolean(key, "input", "natural_scroll", natural_scroll);
+        g_key_file_set_boolean(key, "input", "tap_to_click", tap_to_click);
+        g_key_file_set_boolean(key, "input", "disable_touchpad_while_typing",
+            disable_while_typing);
+        gsize length = 0;
+        char *data = g_key_file_to_data(key, &length, NULL);
+        g_file_set_contents(path, data, length, NULL);
+        g_free(data);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void save_and_apply_mouse(State *st) {
+    double mouse_speed = gtk_range_get_value(GTK_RANGE(st->mouse_speed_scale));
+    double mouse_scroll_speed = gtk_range_get_value(
+        GTK_RANGE(st->mouse_scroll_scale));
+    double touchpad_speed = gtk_range_get_value(
+        GTK_RANGE(st->touchpad_speed_scale));
+    double touchpad_scroll_speed = gtk_range_get_value(
+        GTK_RANGE(st->touchpad_scroll_scale));
+    gboolean natural_scroll = gtk_switch_get_active(
+        GTK_SWITCH(st->natural_scroll_switch));
+    gboolean tap_to_click = gtk_switch_get_active(
+        GTK_SWITCH(st->tap_to_click_switch));
+    gboolean disable_while_typing = gtk_switch_get_active(
+        GTK_SWITCH(st->disable_while_typing_switch));
+
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_double(key, "Input", "mouse_cursor_speed", mouse_speed);
+    g_key_file_set_double(key, "Input", "mouse_scroll_speed",
+        mouse_scroll_speed);
+    g_key_file_set_double(key, "Input", "touchpad_cursor_speed", touchpad_speed);
+    g_key_file_set_double(key, "Input", "touchpad_scroll_speed",
+        touchpad_scroll_speed);
+    g_key_file_set_boolean(key, "Input", "natural_scroll", natural_scroll);
+    g_key_file_set_boolean(key, "Input", "tap_to_click", tap_to_click);
+    g_key_file_set_boolean(key, "Input", "disable_touchpad_while_typing",
+        disable_while_typing);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    char *path = get_mouse_prefs_path();
+    g_file_set_contents(path, data, length, NULL);
+    g_free(path);
+    g_free(data);
+    g_key_file_unref(key);
+
+    apply_mouse_to_runtime(mouse_speed, mouse_scroll_speed,
+        touchpad_speed, touchpad_scroll_speed, natural_scroll,
+        tap_to_click, disable_while_typing);
+    gtk_label_set_text(GTK_LABEL(st->mouse_status_label),
+        getenv("PLUME_RUNTIME")
+            ? "Параметры сохранены и применены в Wayfire"
+            : "Параметры сохранены; применятся при следующем входе в Plume");
+}
+
+static void on_mouse_scale_changed(GtkRange *range, gpointer user_data) {
+    (void)range;
+    State *st = user_data;
+    if (!st->mouse_loading) save_and_apply_mouse(st);
+}
+
+static void on_mouse_switch_changed(GObject *object, GParamSpec *pspec,
+    gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    State *st = user_data;
+    if (st->mouse_loading) return;
+    save_and_apply_mouse(st);
 }
 
 static char *read_os_pretty_name(void) {
@@ -2271,7 +2611,6 @@ static GtkWidget *build_wifi_page(State *st) {
 
     st->wifi_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->wifi_list);
-    refresh_wifi(st);
     return scroll;
 }
 
@@ -2304,7 +2643,6 @@ static GtkWidget *build_network_page(State *st) {
 
     st->network_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->network_list);
-    refresh_network(st);
     return scroll;
 }
 
@@ -2355,7 +2693,6 @@ static GtkWidget *build_bluetooth_page(State *st) {
 
     st->bluetooth_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->bluetooth_list);
-    refresh_bluetooth(st);
     return scroll;
 }
 
@@ -2388,7 +2725,6 @@ static GtkWidget *build_displays_page(State *st) {
 
     st->display_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->display_list);
-    refresh_displays(st);
     return scroll;
 }
 
@@ -2462,7 +2798,6 @@ static GtkWidget *build_sound_page(State *st) {
     gtk_box_append(GTK_BOX(actions), refresh);
     gtk_box_append(GTK_BOX(actions), mixer);
     gtk_box_append(GTK_BOX(box), actions);
-    refresh_sound(st);
     return scroll;
 }
 
@@ -2523,7 +2858,6 @@ static GtkWidget *build_power_page(State *st) {
     gtk_widget_set_halign(refresh, GTK_ALIGN_START);
     g_signal_connect(refresh, "clicked", G_CALLBACK(on_power_refresh), st);
     gtk_box_append(GTK_BOX(box), refresh);
-    refresh_power(st);
     return scroll;
 }
 
@@ -2582,7 +2916,6 @@ static GtkWidget *build_multitasking_page(State *st) {
     gtk_box_append(GTK_BOX(shortcuts), make_info_row(
         "Переключение окон", "Alt + Tab"));
     gtk_box_append(GTK_BOX(box), shortcuts);
-    refresh_workspaces(st);
     return scroll;
 }
 
@@ -2660,7 +2993,6 @@ static GtkWidget *build_applications_page(State *st) {
 
     st->autostart_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_append(GTK_BOX(box), st->autostart_list);
-    refresh_applications(st);
     return scroll;
 }
 
@@ -2716,7 +3048,6 @@ static GtkWidget *build_notifications_page(State *st) {
     gtk_box_append(GTK_BOX(actions), actions_title);
     gtk_box_append(GTK_BOX(actions), buttons);
     gtk_box_append(GTK_BOX(box), actions);
-    refresh_notifications(st);
     return scroll;
 }
 
@@ -2770,9 +3101,9 @@ static GtkWidget *build_search_page(State *st) {
     gtk_switch_set_active(GTK_SWITCH(st->search_descriptions_switch), descriptions);
     gtk_switch_set_active(GTK_SWITCH(st->search_commands_switch), commands);
     st->search_loading = FALSE;
-    g_signal_connect(st->search_descriptions_switch, "state-set",
+    g_signal_connect(st->search_descriptions_switch, "notify::active",
         G_CALLBACK(on_search_source_changed), st);
-    g_signal_connect(st->search_commands_switch, "state-set",
+    g_signal_connect(st->search_commands_switch, "notify::active",
         G_CALLBACK(on_search_source_changed), st);
     gtk_box_append(GTK_BOX(sources), make_search_source_row(
         "Описания приложений",
@@ -2795,6 +3126,211 @@ static GtkWidget *build_search_page(State *st) {
     gtk_box_append(GTK_BOX(actions), try_search);
     gtk_box_append(GTK_BOX(actions), reset);
     gtk_box_append(GTK_BOX(box), actions);
+    return scroll;
+}
+
+static GtkWidget *build_wellbeing_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Благополучие"));
+
+    gboolean enabled = FALSE;
+    guint interval = 30;
+    load_wellbeing_prefs(&enabled, &interval);
+
+    GtkWidget *reminder = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_add_css_class(reminder, "ps-card");
+    GtkWidget *title = gtk_label_new("Перерывы от экрана");
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    gtk_box_append(GTK_BOX(reminder), title);
+
+    st->wellbeing_switch = gtk_switch_new();
+    st->wellbeing_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->wellbeing_switch), enabled);
+    st->wellbeing_loading = FALSE;
+    gtk_box_append(GTK_BOX(reminder), make_search_source_row(
+        "Напоминать о перерыве",
+        "Уведомление работает через пользовательский таймер systemd.",
+        st->wellbeing_switch));
+
+    GtkWidget *interval_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *interval_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(interval_text, TRUE);
+    GtkWidget *interval_title = gtk_label_new("Интервал");
+    gtk_widget_add_css_class(interval_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(interval_title), 0.0f);
+    GtkWidget *interval_hint = gtk_label_new(
+        "Как часто Plume будет предлагать сделать короткий перерыв.");
+    gtk_widget_add_css_class(interval_hint, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(interval_hint), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(interval_hint), TRUE);
+    gtk_box_append(GTK_BOX(interval_text), interval_title);
+    gtk_box_append(GTK_BOX(interval_text), interval_hint);
+    const char *interval_labels[] = {
+        "20 минут", "30 минут", "45 минут", "60 минут", NULL
+    };
+    st->wellbeing_interval = gtk_drop_down_new_from_strings(interval_labels);
+    guint interval_index = 1;
+    for (guint i = 0; i < G_N_ELEMENTS(WELLBEING_INTERVALS); i++) {
+        if (WELLBEING_INTERVALS[i] == interval) interval_index = i;
+    }
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(st->wellbeing_interval),
+        interval_index);
+    gtk_widget_set_valign(st->wellbeing_interval, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(interval_row), interval_text);
+    gtk_box_append(GTK_BOX(interval_row), st->wellbeing_interval);
+    gtk_box_append(GTK_BOX(reminder), interval_row);
+
+    st->wellbeing_status_label = gtk_label_new("Проверка состояния…");
+    gtk_widget_add_css_class(st->wellbeing_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->wellbeing_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(reminder), st->wellbeing_status_label);
+    gtk_box_append(GTK_BOX(box), reminder);
+
+    GtkWidget *test = gtk_button_new_with_label("Проверить напоминание");
+    gtk_widget_add_css_class(test, "ps-btn-primary");
+    gtk_widget_set_halign(test, GTK_ALIGN_START);
+    g_signal_connect(test, "clicked", G_CALLBACK(on_wellbeing_test), st);
+    gtk_box_append(GTK_BOX(box), test);
+
+    g_signal_connect(st->wellbeing_switch, "notify::active",
+        G_CALLBACK(on_wellbeing_enabled), st);
+    g_signal_connect(st->wellbeing_interval, "notify::selected",
+        G_CALLBACK(on_wellbeing_interval_changed), st);
+    return scroll;
+}
+
+static GtkWidget *make_pointer_speed_card(const char *title_text,
+    const char *description, GtkWidget **scale_out, State *st) {
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_add_css_class(card, "ps-card");
+    GtkWidget *title = gtk_label_new(title_text);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *details = gtk_label_new(description);
+    gtk_widget_add_css_class(details, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(details), 0.0f);
+    GtkWidget *scale = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, -1.0, 1.0, 0.05);
+    gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
+    gtk_scale_add_mark(GTK_SCALE(scale), -1.0, GTK_POS_BOTTOM, "Медленно");
+    gtk_scale_add_mark(GTK_SCALE(scale), 0.0, GTK_POS_BOTTOM, "Обычно");
+    gtk_scale_add_mark(GTK_SCALE(scale), 1.0, GTK_POS_BOTTOM, "Быстро");
+    gtk_box_append(GTK_BOX(card), title);
+    gtk_box_append(GTK_BOX(card), details);
+    gtk_box_append(GTK_BOX(card), scale);
+    g_signal_connect(scale, "value-changed",
+        G_CALLBACK(on_mouse_scale_changed), st);
+    *scale_out = scale;
+    return card;
+}
+
+static GtkWidget *make_scroll_speed_control(const char *title_text,
+    const char *description, GtkWidget **scale_out, State *st) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *title = gtk_label_new(title_text);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *details = gtk_label_new(description);
+    gtk_widget_add_css_class(details, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(details), 0.0f);
+    GtkWidget *scale = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, 0.1, 3.0, 0.05);
+    gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
+    gtk_scale_add_mark(GTK_SCALE(scale), 0.1, GTK_POS_BOTTOM, "Медленно");
+    gtk_scale_add_mark(GTK_SCALE(scale), 1.0, GTK_POS_BOTTOM, "Обычно");
+    gtk_scale_add_mark(GTK_SCALE(scale), 3.0, GTK_POS_BOTTOM, "Быстро");
+    gtk_box_append(GTK_BOX(box), title);
+    gtk_box_append(GTK_BOX(box), details);
+    gtk_box_append(GTK_BOX(box), scale);
+    g_signal_connect(scale, "value-changed",
+        G_CALLBACK(on_mouse_scale_changed), st);
+    *scale_out = scale;
+    return box;
+}
+
+static GtkWidget *build_mouse_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box),
+        make_section_title("Мышь и сенсорная панель"));
+
+    double mouse_speed = 0.0, mouse_scroll_speed = 1.0;
+    double touchpad_speed = 0.0, touchpad_scroll_speed = 1.0;
+    gboolean natural_scroll = FALSE, tap_to_click = TRUE;
+    gboolean disable_while_typing = TRUE;
+    load_mouse_prefs(&mouse_speed, &mouse_scroll_speed,
+        &touchpad_speed, &touchpad_scroll_speed,
+        &natural_scroll, &tap_to_click, &disable_while_typing);
+
+    st->mouse_loading = TRUE;
+    GtkWidget *mouse_card = make_pointer_speed_card(
+        "Скорость мыши", "Скорость перемещения указателя мышью.",
+        &st->mouse_speed_scale, st);
+    gtk_range_set_value(GTK_RANGE(st->mouse_speed_scale), mouse_speed);
+    gtk_box_append(GTK_BOX(mouse_card), make_scroll_speed_control(
+        "Скорость прокрутки",
+        "Скорость прокрутки колёсиком мыши.",
+        &st->mouse_scroll_scale, st));
+    gtk_range_set_value(GTK_RANGE(st->mouse_scroll_scale), mouse_scroll_speed);
+    gtk_box_append(GTK_BOX(box), mouse_card);
+
+    GtkWidget *touchpad_card = make_pointer_speed_card(
+        "Скорость сенсорной панели",
+        "Скорость перемещения указателя по сенсорной панели.",
+        &st->touchpad_speed_scale, st);
+    gtk_range_set_value(GTK_RANGE(st->touchpad_speed_scale), touchpad_speed);
+    gtk_box_append(GTK_BOX(touchpad_card), make_scroll_speed_control(
+        "Скорость прокрутки",
+        "Скорость прокрутки жестом на сенсорной панели.",
+        &st->touchpad_scroll_scale, st));
+    gtk_range_set_value(GTK_RANGE(st->touchpad_scroll_scale),
+        touchpad_scroll_speed);
+
+    st->natural_scroll_switch = gtk_switch_new();
+    st->tap_to_click_switch = gtk_switch_new();
+    st->disable_while_typing_switch = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(st->natural_scroll_switch), natural_scroll);
+    gtk_switch_set_active(GTK_SWITCH(st->tap_to_click_switch), tap_to_click);
+    gtk_switch_set_active(GTK_SWITCH(st->disable_while_typing_switch),
+        disable_while_typing);
+    st->mouse_loading = FALSE;
+
+    gtk_box_append(GTK_BOX(touchpad_card), make_search_source_row(
+        "Естественная прокрутка",
+        "Содержимое движется в направлении пальцев.",
+        st->natural_scroll_switch));
+    gtk_box_append(GTK_BOX(touchpad_card), make_search_source_row(
+        "Касание для щелчка",
+        "Короткое касание сенсорной панели выполняет щелчок.",
+        st->tap_to_click_switch));
+    gtk_box_append(GTK_BOX(touchpad_card), make_search_source_row(
+        "Отключать при наборе",
+        "Предотвращает случайные движения указателя во время печати.",
+        st->disable_while_typing_switch));
+    gtk_box_append(GTK_BOX(box), touchpad_card);
+
+    st->mouse_status_label = gtk_label_new(
+        "Изменения применяются к Wayfire сразу");
+    gtk_widget_add_css_class(st->mouse_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->mouse_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(box), st->mouse_status_label);
+
+    g_signal_connect(st->natural_scroll_switch, "notify::active",
+        G_CALLBACK(on_mouse_switch_changed), st);
+    g_signal_connect(st->tap_to_click_switch, "notify::active",
+        G_CALLBACK(on_mouse_switch_changed), st);
+    g_signal_connect(st->disable_while_typing_switch, "notify::active",
+        G_CALLBACK(on_mouse_switch_changed), st);
     return scroll;
 }
 
@@ -3172,7 +3708,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     add_nav_item(nav, "󰀻", "Приложения", "applications");
     add_nav_item(nav, "󰂚", "Уведомления", "notifications");
     add_nav_item(nav, "󰍉", "Поиск", "search");
-    add_nav_item(nav, "󰀄", "Сетевые учётные записи", "online-accounts");
     add_nav_item(nav, "󰒡", "Благополучие", "wellbeing");
     add_nav_item(nav, "󰍽", "Мышь и сенсорная панель", "mouse");
     add_nav_item(nav, "󰌌", "Клавиатура", "keyboard");
@@ -3211,12 +3746,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         build_notifications_page(st), "notifications");
     gtk_stack_add_named(GTK_STACK(st->stack),
         build_search_page(st), "search");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Сетевые учётные записи", "󰀄", "Подключение облачных и сетевых учётных записей."), "online-accounts");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Благополучие", "󰒡", "Экранное время, перерывы и напоминания."), "wellbeing");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Мышь и сенсорная панель", "󰍽", "Скорость указателя, прокрутка, касания и жесты."), "mouse");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_wellbeing_page(st), "wellbeing");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_mouse_page(st), "mouse");
     gtk_stack_add_named(GTK_STACK(st->stack), build_keyboard_page(st), "keyboard");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
         "Управление цветом", "󰏘", "Цветовые профили дисплеев и устройств."), "color");
