@@ -156,6 +156,25 @@ typedef struct {
     GtkWidget *disable_while_typing_switch;
     GtkWidget *mouse_status_label;
     gboolean mouse_loading;
+
+    /* Управление цветом */
+    GtkWidget *color_warm_switch;
+    GtkWidget *color_temperature_scale;
+    GtkWidget *color_status_label;
+    gboolean color_loading;
+
+    /* Принтеры */
+    GtkWidget *printers_list;
+    GtkWidget *printers_status_label;
+    GtkWidget *printers_enable_button;
+    GtkWidget *printers_add_button;
+
+    /* Специальные возможности */
+    GtkWidget *access_large_text_switch;
+    GtkWidget *access_reduce_motion_switch;
+    GtkWidget *access_cursor_size_scale;
+    GtkWidget *access_status_label;
+    gboolean access_loading;
 } State;
 
 static char *get_plume_root(void) {
@@ -374,6 +393,8 @@ static void apply_window_css(State *st) {
         "}",
         border_s, st->accent, st->accent, acc_hover
     );
+    g_string_append(css,
+        "window.plume-settings-win.ps-large-text { font-size: 16px; }");
 
     for (int i = 0; i < N_ACCENTS; i++) {
         g_string_append_printf(css,
@@ -964,6 +985,9 @@ static void refresh_workspaces(State *st);
 static void refresh_applications(State *st);
 static void refresh_notifications(State *st);
 static void refresh_wellbeing_status(State *st);
+static void refresh_printers(State *st);
+static GtkWidget *make_search_source_row(const char *title_text,
+    const char *description, GtkWidget *control);
 
 static void on_launch_tool(GtkButton *btn, gpointer user_data) {
     (void)user_data;
@@ -992,6 +1016,7 @@ static void on_nav_selected(GtkListBox *box, GtkListBoxRow *row, gpointer user_d
     else if (g_strcmp0(page, "applications") == 0) refresh_applications(st);
     else if (g_strcmp0(page, "notifications") == 0) refresh_notifications(st);
     else if (g_strcmp0(page, "wellbeing") == 0) refresh_wellbeing_status(st);
+    else if (g_strcmp0(page, "printers") == 0) refresh_printers(st);
 }
 
 static GtkWidget *make_section_title(const char *text) {
@@ -1047,7 +1072,7 @@ static GtkWidget *make_info_row(const char *key, const char *val) {
     return row;
 }
 
-static char *run_command_capture(char *const argv[]) {
+static char *run_command_capture(char *argv[]) {
     char *out = NULL;
     char *err = NULL;
     int status = 0;
@@ -1061,6 +1086,28 @@ static char *run_command_capture(char *const argv[]) {
     }
     g_free(err);
     return out ? out : g_strdup("");
+}
+
+static gboolean run_command_success(char *argv[]) {
+    char *out = NULL;
+    char *err = NULL;
+    int status = 0;
+    GError *error = NULL;
+    gboolean spawned = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+        NULL, NULL, &out, &err, &status, &error);
+    gboolean success = spawned && g_spawn_check_wait_status(status, &error);
+    g_clear_error(&error);
+    g_free(out);
+    g_free(err);
+    return success;
+}
+
+static gboolean run_command_background(char *argv[]) {
+    GError *error = NULL;
+    gboolean started = g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+        NULL, NULL, NULL, &error);
+    g_clear_error(&error);
+    return started;
 }
 
 static void clear_box(GtkWidget *box) {
@@ -2546,6 +2593,537 @@ static void on_mouse_switch_changed(GObject *object, GParamSpec *pspec,
     save_and_apply_mouse(st);
 }
 
+/* ==================== Управление цветом ==================== */
+
+static char *get_color_prefs_path(void) {
+    char *dir = get_config_dir();
+    char *path = g_build_filename(dir, "color.ini", NULL);
+    g_free(dir);
+    return path;
+}
+
+static void load_color_prefs(gboolean *enabled, guint *temperature) {
+    *enabled = FALSE;
+    *temperature = 4500;
+    char *path = get_color_prefs_path();
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+        gboolean value = g_key_file_get_boolean(key, "Color", "warm", &error);
+        if (!error) *enabled = value;
+        g_clear_error(&error);
+        gint temp = g_key_file_get_integer(key, "Color", "temperature", &error);
+        if (!error && temp >= 2500 && temp <= 6500) *temperature = (guint)temp;
+        g_clear_error(&error);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void save_and_apply_color(State *st) {
+    gboolean enabled = gtk_switch_get_active(GTK_SWITCH(st->color_warm_switch));
+    guint temperature = (guint)gtk_range_get_value(
+        GTK_RANGE(st->color_temperature_scale));
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_boolean(key, "Color", "warm", enabled);
+    g_key_file_set_integer(key, "Color", "temperature", temperature);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    char *path = get_color_prefs_path();
+    g_file_set_contents(path, data, length, NULL);
+    g_free(path);
+    g_free(data);
+    g_key_file_unref(key);
+
+    char *program = g_find_program_in_path("gammastep");
+    if (!program) {
+        gtk_label_set_text(GTK_LABEL(st->color_status_label),
+            "Для применения требуется пакет gammastep");
+        return;
+    }
+    char temp[16];
+    g_snprintf(temp, sizeof(temp), "%u", temperature);
+    char *apply_argv[] = { program, "-P", "-O", temp, NULL };
+    char *reset_argv[] = { program, "-x", NULL };
+    gboolean started = run_command_background(enabled ? apply_argv : reset_argv);
+    gtk_label_set_text(GTK_LABEL(st->color_status_label), started
+        ? (enabled ? "Тёплые цвета применены"
+                   : "Стандартная цветовая температура восстановлена")
+        : "Не удалось применить цветовую температуру");
+    g_free(program);
+}
+
+static void on_color_changed(GObject *object, GParamSpec *pspec,
+    gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    State *st = user_data;
+    if (!st->color_loading) save_and_apply_color(st);
+}
+
+static void on_color_temperature_changed(GtkRange *range, gpointer user_data) {
+    (void)range;
+    State *st = user_data;
+    if (!st->color_loading) save_and_apply_color(st);
+}
+
+static GtkWidget *build_color_page(State *st) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title("Управление цветом"));
+
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_add_css_class(card, "ps-card");
+    st->color_warm_switch = gtk_switch_new();
+    gtk_box_append(GTK_BOX(card), make_search_source_row(
+        "Тёплые цвета", "Уменьшает количество холодного синего света.",
+        st->color_warm_switch));
+    GtkWidget *title = gtk_label_new("Цветовая температура");
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *hint = gtk_label_new(
+        "Более низкая температура делает изображение теплее.");
+    gtk_widget_add_css_class(hint, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+    st->color_temperature_scale = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, 2500, 6500, 100);
+    gtk_scale_set_draw_value(GTK_SCALE(st->color_temperature_scale), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(st->color_temperature_scale), GTK_POS_RIGHT);
+    gtk_scale_add_mark(GTK_SCALE(st->color_temperature_scale), 2500,
+        GTK_POS_BOTTOM, "Теплее");
+    gtk_scale_add_mark(GTK_SCALE(st->color_temperature_scale), 4500,
+        GTK_POS_BOTTOM, "Обычно");
+    gtk_scale_add_mark(GTK_SCALE(st->color_temperature_scale), 6500,
+        GTK_POS_BOTTOM, "Холоднее");
+    gtk_box_append(GTK_BOX(card), title);
+    gtk_box_append(GTK_BOX(card), hint);
+    gtk_box_append(GTK_BOX(card), st->color_temperature_scale);
+    gtk_box_append(GTK_BOX(box), card);
+    st->color_status_label = gtk_label_new("Стандартная цветовая температура");
+    gtk_widget_add_css_class(st->color_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->color_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(box), st->color_status_label);
+
+    gboolean enabled;
+    guint temperature;
+    load_color_prefs(&enabled, &temperature);
+    st->color_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->color_warm_switch), enabled);
+    gtk_range_set_value(GTK_RANGE(st->color_temperature_scale), temperature);
+    st->color_loading = FALSE;
+    gtk_label_set_text(GTK_LABEL(st->color_status_label), enabled
+        ? "Тёплые цвета включены" : "Стандартная цветовая температура");
+    g_signal_connect(st->color_warm_switch, "notify::active",
+        G_CALLBACK(on_color_changed), st);
+    g_signal_connect(st->color_temperature_scale, "value-changed",
+        G_CALLBACK(on_color_temperature_changed), st);
+    return box;
+}
+
+/* ==================== Принтеры ==================== */
+
+static void refresh_printers(State *st);
+
+static void on_printer_default(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    const char *name = g_object_get_data(G_OBJECT(button), "printer-name");
+    if (!name) return;
+    char *argv[] = { "lpoptions", "-d", (char *)name, NULL };
+    gboolean success = run_command_success(argv);
+    refresh_printers(st);
+    if (!success)
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Не удалось изменить принтер по умолчанию");
+}
+
+static void on_printer_remove(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    const char *name = g_object_get_data(G_OBJECT(button), "printer-name");
+    if (!name) return;
+    char *argv[] = { "pkexec", "lpadmin", "-x", (char *)name, NULL };
+    gboolean success = run_command_success(argv);
+    refresh_printers(st);
+    if (!success)
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Не удалось удалить принтер");
+}
+
+static GtkWidget *make_printer_row(State *st, const char *name,
+    gboolean is_default) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_add_css_class(row, "ps-card");
+    GtkWidget *icon = gtk_label_new("󰐪");
+    gtk_widget_add_css_class(icon, "ps-tool-icon");
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand(text, TRUE);
+    GtkWidget *title = gtk_label_new(name);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *status = gtk_label_new(is_default
+        ? "Принтер по умолчанию" : "Готов к печати");
+    gtk_widget_add_css_class(status, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+    gtk_box_append(GTK_BOX(text), title);
+    gtk_box_append(GTK_BOX(text), status);
+    gtk_box_append(GTK_BOX(row), icon);
+    gtk_box_append(GTK_BOX(row), text);
+    if (!is_default) {
+        GtkWidget *set_default = gtk_button_new_with_label("По умолчанию");
+        gtk_widget_add_css_class(set_default, "ps-btn");
+        g_object_set_data_full(G_OBJECT(set_default), "printer-name",
+            g_strdup(name), g_free);
+        g_signal_connect(set_default, "clicked",
+            G_CALLBACK(on_printer_default), st);
+        gtk_box_append(GTK_BOX(row), set_default);
+    }
+    GtkWidget *remove = gtk_button_new_with_label("Удалить");
+    gtk_widget_add_css_class(remove, "ps-btn");
+    g_object_set_data_full(G_OBJECT(remove), "printer-name",
+        g_strdup(name), g_free);
+    g_signal_connect(remove, "clicked", G_CALLBACK(on_printer_remove), st);
+    gtk_box_append(GTK_BOX(row), remove);
+    return row;
+}
+
+static void refresh_printers(State *st) {
+    if (!st->printers_list) return;
+    clear_box(st->printers_list);
+    char *lpstat_program = g_find_program_in_path("lpstat");
+    if (!lpstat_program) {
+        gtk_widget_set_visible(st->printers_enable_button, FALSE);
+        gtk_widget_set_sensitive(st->printers_add_button, FALSE);
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Компоненты печати CUPS не установлены");
+        return;
+    }
+    g_free(lpstat_program);
+    char *service_argv[] = { "systemctl", "is-active", "cups.service", NULL };
+    char *service = run_command_capture(service_argv);
+    g_strstrip(service);
+    gboolean service_active = g_strcmp0(service, "active") == 0;
+    g_free(service);
+    if (st->printers_enable_button)
+        gtk_widget_set_visible(st->printers_enable_button, !service_active);
+    gtk_widget_set_sensitive(st->printers_add_button, service_active);
+    if (!service_active) {
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Служба печати CUPS выключена");
+        GtkWidget *hint = gtk_label_new(
+            "Включи службу печати, чтобы добавлять и использовать принтеры.");
+        gtk_widget_add_css_class(hint, "ps-muted");
+        gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+        gtk_box_append(GTK_BOX(st->printers_list), hint);
+        return;
+    }
+    char *list_argv[] = { "lpstat", "-e", NULL };
+    char *default_argv[] = { "lpstat", "-d", NULL };
+    char *output = run_command_capture(list_argv);
+    char *default_output = run_command_capture(default_argv);
+    char *colon = strchr(default_output, ':');
+    char *default_name = colon ? g_strdup(colon + 1) : g_strdup("");
+    g_strstrip(default_name);
+    char **lines = g_strsplit(output, "\n", -1);
+    guint count = 0;
+    for (guint i = 0; lines[i]; i++) {
+        g_strstrip(lines[i]);
+        if (!lines[i][0]) continue;
+        gtk_box_append(GTK_BOX(st->printers_list), make_printer_row(st,
+            lines[i], g_strcmp0(lines[i], default_name) == 0));
+        count++;
+    }
+    gtk_label_set_text(GTK_LABEL(st->printers_status_label), count
+        ? "Принтеры CUPS готовы к работе"
+        : "Принтеры пока не добавлены");
+    g_strfreev(lines);
+    g_free(default_name);
+    g_free(default_output);
+    g_free(output);
+}
+
+static void on_printers_refresh(GtkButton *button, gpointer user_data) {
+    (void)button;
+    refresh_printers(user_data);
+}
+
+static void on_enable_printing(GtkButton *button, gpointer user_data) {
+    (void)button;
+    State *st = user_data;
+    char *argv[] = { "pkexec", "systemctl", "enable", "--now",
+        "cups.service", NULL };
+    gboolean success = run_command_success(argv);
+    refresh_printers(st);
+    if (!success)
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Не удалось включить службу печати");
+}
+
+static void on_add_printer_cancel(GtkButton *button, gpointer user_data) {
+    (void)button;
+    gtk_window_destroy(GTK_WINDOW(user_data));
+}
+
+static void on_add_printer_confirm(GtkButton *button, gpointer user_data) {
+    (void)button;
+    GtkWidget *window = user_data;
+    State *st = g_object_get_data(G_OBJECT(window), "state");
+    GtkWidget *name_entry = g_object_get_data(G_OBJECT(window), "name-entry");
+    GtkWidget *uri_entry = g_object_get_data(G_OBJECT(window), "uri-entry");
+    const char *name = gtk_editable_get_text(GTK_EDITABLE(name_entry));
+    const char *uri = gtk_editable_get_text(GTK_EDITABLE(uri_entry));
+    if (!name || !*name || !uri || !*uri) {
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Укажи название и IPP-адрес принтера");
+        return;
+    }
+    char *argv[] = { "pkexec", "lpadmin", "-p", (char *)name,
+        "-E", "-v", (char *)uri, "-m", "everywhere", NULL };
+    gboolean success = run_command_success(argv);
+    gtk_window_destroy(GTK_WINDOW(window));
+    refresh_printers(st);
+    if (!success)
+        gtk_label_set_text(GTK_LABEL(st->printers_status_label),
+            "Не удалось добавить принтер: проверь название и адрес");
+}
+
+static void on_add_printer(GtkButton *button, gpointer user_data) {
+    (void)button;
+    State *st = user_data;
+    GtkWidget *window = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(window), "Добавить принтер");
+    gtk_window_set_transient_for(GTK_WINDOW(window), GTK_WINDOW(st->win));
+    gtk_window_set_modal(GTK_WINDOW(window), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(window), 520, -1);
+    GtkWidget *form = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_top(form, 18);
+    gtk_widget_set_margin_bottom(form, 18);
+    gtk_widget_set_margin_start(form, 18);
+    gtk_widget_set_margin_end(form, 18);
+    GtkWidget *title = gtk_label_new("Добавить IPP-принтер");
+    gtk_widget_add_css_class(title, "ps-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    GtkWidget *name = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(name), "Название принтера");
+    GtkWidget *uri = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(uri),
+        "Адрес IPP, например ipp://192.168.1.50/ipp/print");
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(actions, GTK_ALIGN_END);
+    GtkWidget *cancel = gtk_button_new_with_label("Отмена");
+    gtk_widget_add_css_class(cancel, "ps-btn");
+    GtkWidget *confirm = gtk_button_new_with_label("Добавить");
+    gtk_widget_add_css_class(confirm, "ps-btn-primary");
+    gtk_box_append(GTK_BOX(actions), cancel);
+    gtk_box_append(GTK_BOX(actions), confirm);
+    gtk_box_append(GTK_BOX(form), title);
+    gtk_box_append(GTK_BOX(form), name);
+    gtk_box_append(GTK_BOX(form), uri);
+    gtk_box_append(GTK_BOX(form), actions);
+    gtk_window_set_child(GTK_WINDOW(window), form);
+    g_object_set_data(G_OBJECT(window), "state", st);
+    g_object_set_data(G_OBJECT(window), "name-entry", name);
+    g_object_set_data(G_OBJECT(window), "uri-entry", uri);
+    g_signal_connect(cancel, "clicked", G_CALLBACK(on_add_printer_cancel), window);
+    g_signal_connect(confirm, "clicked", G_CALLBACK(on_add_printer_confirm), window);
+    gtk_window_present(GTK_WINDOW(window));
+}
+
+static GtkWidget *build_printers_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_box_append(GTK_BOX(box), make_section_title("Принтеры"));
+    st->printers_status_label = gtk_label_new("Проверка CUPS…");
+    gtk_widget_add_css_class(st->printers_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->printers_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(box), st->printers_status_label);
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    st->printers_enable_button = gtk_button_new_with_label("Включить печать");
+    gtk_widget_add_css_class(st->printers_enable_button, "ps-btn-primary");
+    g_signal_connect(st->printers_enable_button, "clicked",
+        G_CALLBACK(on_enable_printing), st);
+    st->printers_add_button = gtk_button_new_with_label("Добавить IPP-принтер");
+    gtk_widget_add_css_class(st->printers_add_button, "ps-btn-primary");
+    g_signal_connect(st->printers_add_button, "clicked",
+        G_CALLBACK(on_add_printer), st);
+    GtkWidget *refresh = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(refresh, "ps-btn");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_printers_refresh), st);
+    gtk_box_append(GTK_BOX(actions), st->printers_enable_button);
+    gtk_box_append(GTK_BOX(actions), st->printers_add_button);
+    gtk_box_append(GTK_BOX(actions), refresh);
+    gtk_box_append(GTK_BOX(box), actions);
+    st->printers_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_append(GTK_BOX(box), st->printers_list);
+    return scroll;
+}
+
+/* ==================== Специальные возможности ==================== */
+
+static char *get_accessibility_prefs_path(void) {
+    char *dir = get_config_dir();
+    char *path = g_build_filename(dir, "accessibility.ini", NULL);
+    g_free(dir);
+    return path;
+}
+
+static void load_accessibility_prefs(gboolean *large_text,
+    gboolean *reduce_motion, guint *cursor_size) {
+    *large_text = FALSE;
+    *reduce_motion = FALSE;
+    *cursor_size = 24;
+    char *path = get_accessibility_prefs_path();
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+        gboolean value = g_key_file_get_boolean(key, "Accessibility",
+            "large_text", &error);
+        if (!error) *large_text = value;
+        g_clear_error(&error);
+        value = g_key_file_get_boolean(key, "Accessibility",
+            "reduce_motion", &error);
+        if (!error) *reduce_motion = value;
+        g_clear_error(&error);
+        gint size = g_key_file_get_integer(key, "Accessibility",
+            "cursor_size", &error);
+        if (!error && size >= 16 && size <= 64) *cursor_size = (guint)size;
+        g_clear_error(&error);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void save_and_apply_accessibility(State *st) {
+    gboolean large_text = gtk_switch_get_active(
+        GTK_SWITCH(st->access_large_text_switch));
+    gboolean reduce_motion = gtk_switch_get_active(
+        GTK_SWITCH(st->access_reduce_motion_switch));
+    guint cursor_size = (guint)gtk_range_get_value(
+        GTK_RANGE(st->access_cursor_size_scale));
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_boolean(key, "Accessibility", "large_text", large_text);
+    g_key_file_set_boolean(key, "Accessibility", "reduce_motion", reduce_motion);
+    g_key_file_set_integer(key, "Accessibility", "cursor_size", cursor_size);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    char *path = get_accessibility_prefs_path();
+    g_file_set_contents(path, data, length, NULL);
+    g_free(path);
+    g_free(data);
+    g_key_file_unref(key);
+
+    if (large_text) gtk_widget_add_css_class(st->win, "ps-large-text");
+    else gtk_widget_remove_css_class(st->win, "ps-large-text");
+    GtkSettings *gtk_settings = gtk_settings_get_default();
+    if (gtk_settings)
+        g_object_set(gtk_settings, "gtk-enable-animations", !reduce_motion, NULL);
+
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+    GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source,
+        "org.gnome.desktop.interface", TRUE) : NULL;
+    if (schema) {
+        GSettings *settings = g_settings_new_full(schema, NULL, NULL);
+        g_settings_set_double(settings, "text-scaling-factor",
+            large_text ? 1.25 : 1.0);
+        g_settings_set_boolean(settings, "enable-animations", !reduce_motion);
+        g_object_unref(settings);
+        g_settings_schema_unref(schema);
+    }
+
+    const char *runtime = getenv("PLUME_RUNTIME");
+    if (runtime && *runtime) {
+        char *wf = g_build_filename(runtime, "wayfire", "wayfire.ini", NULL);
+        GKeyFile *wf_key = g_key_file_new();
+        if (g_key_file_load_from_file(wf_key, wf,
+            G_KEY_FILE_KEEP_COMMENTS, NULL)) {
+            g_key_file_set_integer(wf_key, "input", "cursor_size", cursor_size);
+            g_key_file_set_string(wf_key, "animate", "duration",
+                reduce_motion ? "0ms linear" : "220ms circle");
+            g_key_file_set_string(wf_key, "animate", "zoom_duration",
+                reduce_motion ? "0ms linear" : "220ms circle");
+            g_key_file_set_string(wf_key, "animate", "fade_duration",
+                reduce_motion ? "0ms linear" : "180ms linear");
+            g_key_file_set_string(wf_key, "animate", "squeezimize_duration",
+                reduce_motion ? "0ms linear" : "200ms circle");
+            gsize wf_length = 0;
+            char *wf_data = g_key_file_to_data(wf_key, &wf_length, NULL);
+            g_file_set_contents(wf, wf_data, wf_length, NULL);
+            g_free(wf_data);
+        }
+        g_key_file_unref(wf_key);
+        g_free(wf);
+    }
+    gtk_label_set_text(GTK_LABEL(st->access_status_label),
+        "Параметры специальных возможностей применены");
+}
+
+static void on_accessibility_changed(GObject *object, GParamSpec *pspec,
+    gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    State *st = user_data;
+    if (!st->access_loading) save_and_apply_accessibility(st);
+}
+
+static void on_cursor_size_changed(GtkRange *range, gpointer user_data) {
+    (void)range;
+    State *st = user_data;
+    if (!st->access_loading) save_and_apply_accessibility(st);
+}
+
+static GtkWidget *build_accessibility_page(State *st) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title("Специальные возможности"));
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(card, "ps-card");
+    st->access_large_text_switch = gtk_switch_new();
+    st->access_reduce_motion_switch = gtk_switch_new();
+    gtk_box_append(GTK_BOX(card), make_search_source_row("Крупный текст",
+        "Увеличивает текст интерфейса до 125%.",
+        st->access_large_text_switch));
+    gtk_box_append(GTK_BOX(card), make_search_source_row("Уменьшить анимации",
+        "Отключает лишние переходы GTK и Wayfire.",
+        st->access_reduce_motion_switch));
+    GtkWidget *cursor_title = gtk_label_new("Размер указателя");
+    gtk_widget_add_css_class(cursor_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(cursor_title), 0.0f);
+    st->access_cursor_size_scale = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, 16, 64, 4);
+    gtk_scale_set_draw_value(GTK_SCALE(st->access_cursor_size_scale), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(st->access_cursor_size_scale), GTK_POS_RIGHT);
+    gtk_scale_add_mark(GTK_SCALE(st->access_cursor_size_scale), 24,
+        GTK_POS_BOTTOM, "Обычный");
+    gtk_scale_add_mark(GTK_SCALE(st->access_cursor_size_scale), 48,
+        GTK_POS_BOTTOM, "Крупный");
+    gtk_box_append(GTK_BOX(card), cursor_title);
+    gtk_box_append(GTK_BOX(card), st->access_cursor_size_scale);
+    gtk_box_append(GTK_BOX(box), card);
+    st->access_status_label = gtk_label_new("Параметры применяются сразу");
+    gtk_widget_add_css_class(st->access_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->access_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(box), st->access_status_label);
+
+    gboolean large_text, reduce_motion;
+    guint cursor_size;
+    load_accessibility_prefs(&large_text, &reduce_motion, &cursor_size);
+    st->access_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->access_large_text_switch), large_text);
+    gtk_switch_set_active(GTK_SWITCH(st->access_reduce_motion_switch), reduce_motion);
+    gtk_range_set_value(GTK_RANGE(st->access_cursor_size_scale), cursor_size);
+    st->access_loading = FALSE;
+    if (large_text) gtk_widget_add_css_class(st->win, "ps-large-text");
+    g_signal_connect(st->access_large_text_switch, "notify::active",
+        G_CALLBACK(on_accessibility_changed), st);
+    g_signal_connect(st->access_reduce_motion_switch, "notify::active",
+        G_CALLBACK(on_accessibility_changed), st);
+    g_signal_connect(st->access_cursor_size_scale, "value-changed",
+        G_CALLBACK(on_cursor_size_changed), st);
+    return box;
+}
+
 static char *read_os_pretty_name(void) {
     FILE *f = fopen("/etc/os-release", "r");
     if (!f) return g_strdup("Linux");
@@ -3587,15 +4165,6 @@ static GtkWidget *build_about_page(void) {
     return box;
 }
 
-static GtkWidget *build_tool_page(const char *title, const char *icon_txt,
-    const char *tool_title, const char *description, const char *cmd) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
-    gtk_widget_add_css_class(box, "ps-page");
-    gtk_box_append(GTK_BOX(box), make_section_title(title));
-    gtk_box_append(GTK_BOX(box), make_tool_row(icon_txt, tool_title, description, cmd));
-    return box;
-}
-
 static GtkWidget *build_placeholder_page(const char *title, const char *icon_txt,
     const char *description) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
@@ -3751,12 +4320,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_stack_add_named(GTK_STACK(st->stack),
         build_mouse_page(st), "mouse");
     gtk_stack_add_named(GTK_STACK(st->stack), build_keyboard_page(st), "keyboard");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Управление цветом", "󰏘", "Цветовые профили дисплеев и устройств."), "color");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Принтеры", "󰐪", "Добавление принтеров и управление очередью печати."), "printers");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Специальные возможности", "󰖚", "Зрение, слух, ввод и другие параметры доступности."), "accessibility");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_color_page(st), "color");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_printers_page(st), "printers");
+    gtk_stack_add_named(GTK_STACK(st->stack),
+        build_accessibility_page(st), "accessibility");
     gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
         "Конфиденциальность и безопасность", "󰌾", "Доступ приложений, блокировка экрана и безопасность системы."), "privacy");
     gtk_stack_add_named(GTK_STACK(st->stack), build_system_page(), "system");

@@ -90,6 +90,32 @@ set_input_option() {
 set_input_option mouse_scroll_speed "$MOUSE_SCROLL_SPEED"
 set_input_option touchpad_scroll_speed "$TOUCHPAD_SCROLL_SPEED"
 
+read_plume_pref() {
+  file="$1"
+  key="$2"
+  fallback="$3"
+  value=""
+  if [ -f "$file" ]; then
+    value="$(sed -n "s/^${key}=//p" "$file" | tail -n 1 | tr -d ' ')"
+  fi
+  [ -n "$value" ] || value="$fallback"
+  printf '%s' "$value"
+}
+
+ACCESS_CFG="$HOME/.config/plume/accessibility.ini"
+ACCESS_LARGE_TEXT="$(read_plume_pref "$ACCESS_CFG" large_text false)"
+ACCESS_REDUCE_MOTION="$(read_plume_pref "$ACCESS_CFG" reduce_motion false)"
+ACCESS_CURSOR_SIZE="$(read_plume_pref "$ACCESS_CFG" cursor_size 24)"
+set_input_option cursor_size "$ACCESS_CURSOR_SIZE"
+if [ "$ACCESS_REDUCE_MOTION" = "true" ]; then
+  sed -i -E \
+    -e 's|^duration[[:space:]]*=.*$|duration = 0ms linear|' \
+    -e 's|^zoom_duration[[:space:]]*=.*$|zoom_duration = 0ms linear|' \
+    -e 's|^fade_duration[[:space:]]*=.*$|fade_duration = 0ms linear|' \
+    -e 's|^squeezimize_duration[[:space:]]*=.*$|squeezimize_duration = 0ms linear|' \
+    "$RT_DIR/wayfire/wayfire.ini"
+fi
+
 sed -e "s|/usr/share/plume/assets/plume-logo-clean.svg|$RT_DIR/waybar/plume-logo.svg|g" -e "s|/usr/share/plume|$ROOT|g" "$ROOT/config/waybar/config.jsonc" > "$RT_DIR/waybar/config.jsonc"
 
 export PLUME_ROOT="$ROOT"
@@ -108,6 +134,19 @@ export GSETTINGS_BACKEND=keyfile
 if command -v gsettings >/dev/null 2>&1 &&
    gsettings list-schemas | grep -qx 'org.gnome.desktop.wm.preferences'; then
   gsettings set org.gnome.desktop.wm.preferences button-layout ':minimize,maximize,close' || true
+fi
+if command -v gsettings >/dev/null 2>&1 &&
+   gsettings list-schemas | grep -qx 'org.gnome.desktop.interface'; then
+  if [ "$ACCESS_LARGE_TEXT" = "true" ]; then
+    gsettings set org.gnome.desktop.interface text-scaling-factor 1.25 || true
+  else
+    gsettings set org.gnome.desktop.interface text-scaling-factor 1.0 || true
+  fi
+  if [ "$ACCESS_REDUCE_MOTION" = "true" ]; then
+    gsettings set org.gnome.desktop.interface enable-animations false || true
+  else
+    gsettings set org.gnome.desktop.interface enable-animations true || true
+  fi
 fi
 export GTK_THEME="Plume"
 export GSK_RENDERER="gl"

@@ -25,6 +25,8 @@ depends=(
   'libpulse'
   'pavucontrol'
   'brightnessctl'
+  'gammastep'
+  'cups'
   'nm-connection-editor'
   'polkit-gnome'
   'procps-ng'

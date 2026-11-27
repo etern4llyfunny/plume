@@ -44,6 +44,16 @@ echo $! >> "$PIDS"
 mako -c "$RT/mako/config" &
 echo $! >> "$PIDS"
 
+COLOR_CFG="$HOME/.config/plume/color.ini"
+if [ -f "$COLOR_CFG" ] && command -v gammastep >/dev/null 2>&1; then
+  COLOR_WARM="$(sed -n 's/^warm=//p' "$COLOR_CFG" | tail -n 1 | tr -d ' ')"
+  COLOR_TEMPERATURE="$(sed -n 's/^temperature=//p' "$COLOR_CFG" | tail -n 1 | tr -d ' ')"
+  [ -n "$COLOR_TEMPERATURE" ] || COLOR_TEMPERATURE=4500
+  if [ "$COLOR_WARM" = "true" ]; then
+    gammastep -P -O "$COLOR_TEMPERATURE" >/dev/null 2>&1 &
+  fi
+fi
+
 if [ "${PLUME_NESTED:-0}" != "1" ]; then
   for agent in \
     /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
