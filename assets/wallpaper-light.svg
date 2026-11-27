@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <radialGradient id="background" cx="42%" cy="38%" r="82%">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="0.58" stop-color="#f1f5fb"/>
+      <stop offset="1" stop-color="#e4ebf5"/>
+    </radialGradient>
+    <linearGradient id="feather-left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#99b9e8"/>
+      <stop offset="1" stop-color="#5d82be"/>
+    </linearGradient>
+    <linearGradient id="feather-right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7197cf"/>
+      <stop offset="1" stop-color="#3f6299"/>
+    </linearGradient>
+    <linearGradient id="shaft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8ca9d4"/>
+      <stop offset="0.5" stop-color="#d6e2f4"/>
+      <stop offset="1" stop-color="#7898c7"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#background)"/>
+  <ellipse cx="1640" cy="965" rx="340" ry="90" fill="#8095b3" opacity="0.12" filter="url(#soft-shadow)"/>
+
+  <g transform="translate(1210 525) scale(1.38)" opacity="0.72">
+    <g transform="translate(256 256) rotate(35) scale(1.12) translate(-256 -256)">
+      <path fill="url(#feather-left)" d="M256 412C238 392 207 320 206 205C205 190 206 172 208 158L230 189L209 152C212 100 232 56 256 36Z"/>
+      <path fill="url(#feather-right)" d="M256 36C280 56 330 120 330 205C331 232 330 262 328 285L305 318L327 291C325 340 290 395 256 412Z"/>
+      <path fill="#89a4ca" d="M252.4 408L251.6 470Q256 492 260.4 470L259.6 408Z"/>
+      <path fill="url(#shaft)" d="M252.4 414L254.7 34Q256 27 257.3 34L259.6 414Z"/>
+    </g>
+  </g>
+</svg>

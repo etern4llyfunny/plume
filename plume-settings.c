@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <unistd.h>
 
 typedef struct {
     const char *code;
@@ -175,6 +177,26 @@ typedef struct {
     GtkWidget *access_cursor_size_scale;
     GtkWidget *access_status_label;
     gboolean access_loading;
+
+    /* Конфиденциальность и безопасность */
+    GtkWidget *privacy_lock_switch;
+    GtkWidget *privacy_lock_delay;
+    GtkWidget *privacy_microphone_switch;
+    GtkWidget *privacy_status_label;
+    gboolean privacy_loading;
+
+    /* Система */
+    GtkWidget *system_updates_label;
+    GtkWidget *system_updates_list;
+    GtkWidget *system_updates_button;
+    GtkWidget *system_install_button;
+    GtkWidget *system_cancel_button;
+    GtkWidget *system_install_revealer;
+    GtkWidget *system_results_revealer;
+    GSubprocess *system_process;
+    gboolean system_updates_running;
+    gboolean system_updates_cancelled;
+    gboolean system_installing;
 } State;
 
 static char *get_plume_root(void) {
@@ -185,9 +207,11 @@ static char *get_plume_root(void) {
     return g_build_filename(g_get_home_dir(), "plume", NULL);
 }
 
-static char *get_default_wallpaper(void) {
+static char *get_default_wallpaper_for_mode(const char *mode) {
     char *root = get_plume_root();
-    char *p = g_build_filename(root, "assets", "wallpaper.png", NULL);
+    const char *name = (mode && strcmp(mode, "light") == 0)
+        ? "wallpaper-light.png" : "wallpaper.png";
+    char *p = g_build_filename(root, "assets", name, NULL);
     g_free(root);
     return p;
 }
@@ -395,6 +419,14 @@ static void apply_window_css(State *st) {
     );
     g_string_append(css,
         "window.plume-settings-win.ps-large-text { font-size: 16px; }");
+    g_string_append(css,
+        "button.ps-btn-danger { background: #d83e3e; background-image: none;"
+        " color: #ffffff; border: 1px solid #d83e3e; border-radius: 6px;"
+        " padding: 6px 12px; box-shadow: none; }"
+        "button.ps-btn-danger:hover { background: #eb5050; }"
+        "button.ps-btn-danger:disabled { background: #454952; border-color: #454952;"
+        " color: #a1a4ab; opacity: 0.65; }"
+        "button.ps-btn-primary:disabled { opacity: 0.45; }");
 
     for (int i = 0; i < N_ACCENTS; i++) {
         g_string_append_printf(css,
@@ -471,7 +503,16 @@ static void load_theme_prefs(State *st) {
     g_free(ini);
 }
 
-static char *read_current_wallpaper(void) {
+static gboolean has_custom_wallpaper(void) {
+    char *cfg = get_config_dir();
+    char *wf = g_build_filename(cfg, "wallpaper", NULL);
+    g_free(cfg);
+    gboolean exists = g_file_test(wf, G_FILE_TEST_IS_REGULAR);
+    g_free(wf);
+    return exists;
+}
+
+static char *read_current_wallpaper(State *st) {
     char *cfg = get_config_dir();
     char *wf = g_build_filename(cfg, "wallpaper", NULL);
     g_free(cfg);
@@ -486,7 +527,7 @@ static char *read_current_wallpaper(void) {
         g_free(content);
     }
     g_free(wf);
-    return get_default_wallpaper();
+    return get_default_wallpaper_for_mode(st->mode);
 }
 
 static void apply_wallpaper(State *st, const char *path, gboolean save_custom) {
@@ -515,6 +556,13 @@ static void apply_wallpaper(State *st, const char *path, gboolean save_custom) {
         g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &err);
         if (err) g_error_free(err);
     }
+}
+
+static void apply_theme_wallpaper_if_default(State *st) {
+    if (has_custom_wallpaper()) return;
+    char *wall = get_default_wallpaper_for_mode(st->mode);
+    apply_wallpaper(st, wall, FALSE);
+    g_free(wall);
 }
 
 static void on_wall_picked(GObject *src, GAsyncResult *res, gpointer user_data) {
@@ -557,7 +605,7 @@ static void on_choose_wall(GtkButton *btn, gpointer user_data) {
 static void on_reset_wall(GtkButton *btn, gpointer user_data) {
     (void)btn;
     State *st = user_data;
-    char *def = get_default_wallpaper();
+    char *def = get_default_wallpaper_for_mode(st->mode);
     apply_wallpaper(st, def, FALSE);
     g_free(def);
 }
@@ -567,6 +615,7 @@ static void on_mode_dark(GtkButton *btn, gpointer user_data) {
     State *st = user_data;
     g_strlcpy(st->mode, "dark", sizeof(st->mode));
     save_and_apply_theme(st);
+    apply_theme_wallpaper_if_default(st);
 }
 
 static void on_mode_light(GtkButton *btn, gpointer user_data) {
@@ -574,6 +623,7 @@ static void on_mode_light(GtkButton *btn, gpointer user_data) {
     State *st = user_data;
     g_strlcpy(st->mode, "light", sizeof(st->mode));
     save_and_apply_theme(st);
+    apply_theme_wallpaper_if_default(st);
 }
 
 static void on_swatch_clicked(GtkButton *btn, gpointer user_data) {
@@ -620,6 +670,7 @@ static void on_apply_builtin_profile(GtkButton *btn, gpointer user_data) {
     g_strlcpy(st->mode, BUILTIN_PROFILES[idx].mode, sizeof(st->mode));
     g_strlcpy(st->accent, BUILTIN_PROFILES[idx].accent, sizeof(st->accent));
     save_and_apply_theme(st);
+    apply_theme_wallpaper_if_default(st);
 }
 
 static void on_apply_custom_profile(GtkButton *btn, gpointer user_data) {
@@ -645,10 +696,14 @@ static void on_apply_custom_profile(GtkButton *btn, gpointer user_data) {
 
     save_and_apply_theme(st);
     if (wall[0] && g_file_test(wall, G_FILE_TEST_IS_REGULAR)) {
-        char *def = get_default_wallpaper();
-        gboolean is_custom = (strcmp(wall, def) != 0);
-        g_free(def);
+        char *dark = get_default_wallpaper_for_mode("dark");
+        char *light = get_default_wallpaper_for_mode("light");
+        gboolean is_custom = strcmp(wall, dark) != 0 && strcmp(wall, light) != 0;
+        g_free(dark);
+        g_free(light);
         apply_wallpaper(st, wall, is_custom);
+    } else {
+        apply_theme_wallpaper_if_default(st);
     }
 }
 
@@ -1024,36 +1079,6 @@ static GtkWidget *make_section_title(const char *text) {
     gtk_widget_add_css_class(lbl, "ps-title");
     gtk_label_set_xalign(GTK_LABEL(lbl), 0.0f);
     return lbl;
-}
-
-static GtkWidget *make_tool_row(const char *icon_txt, const char *title, const char *desc, const char *cmd) {
-    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    gtk_widget_add_css_class(card, "ps-card");
-
-    GtkWidget *ico = gtk_label_new(icon_txt);
-    gtk_widget_add_css_class(ico, "ps-tool-icon");
-    gtk_box_append(GTK_BOX(card), ico);
-
-    GtkWidget *info = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_widget_set_hexpand(info, TRUE);
-    GtkWidget *t = gtk_label_new(title);
-    gtk_widget_add_css_class(t, "ps-card-title");
-    gtk_label_set_xalign(GTK_LABEL(t), 0.0f);
-    GtkWidget *d = gtk_label_new(desc);
-    gtk_widget_add_css_class(d, "ps-muted");
-    gtk_label_set_xalign(GTK_LABEL(d), 0.0f);
-    gtk_box_append(GTK_BOX(info), t);
-    gtk_box_append(GTK_BOX(info), d);
-    gtk_box_append(GTK_BOX(card), info);
-
-    GtkWidget *btn = gtk_button_new_with_label("Открыть");
-    gtk_widget_add_css_class(btn, "ps-btn");
-    gtk_widget_set_valign(btn, GTK_ALIGN_CENTER);
-    g_object_set_data(G_OBJECT(btn), "tool-cmd", (gpointer)cmd);
-    g_signal_connect(btn, "clicked", G_CALLBACK(on_launch_tool), NULL);
-    gtk_box_append(GTK_BOX(card), btn);
-
-    return card;
 }
 
 static GtkWidget *make_info_row(const char *key, const char *val) {
@@ -3125,25 +3150,118 @@ static GtkWidget *build_accessibility_page(State *st) {
 }
 
 static char *read_os_pretty_name(void) {
-    FILE *f = fopen("/etc/os-release", "r");
-    if (!f) return g_strdup("Linux");
-    char line[256];
-    char *res = NULL;
-    while (fgets(line, sizeof(line), f)) {
-        if (g_str_has_prefix(line, "PRETTY_NAME=")) {
-            char *v = line + strlen("PRETTY_NAME=");
-            g_strstrip(v);
-            size_t n = strlen(v);
-            if (n >= 2 && v[0] == '"' && v[n - 1] == '"') {
-                v[n - 1] = '\0';
-                v++;
-            }
-            res = g_strdup(v);
-            break;
+    char *name = g_get_os_info(G_OS_INFO_KEY_PRETTY_NAME);
+    if (!name || !*name) {
+        g_free(name);
+        return g_strdup("Linux");
+    }
+    return name;
+}
+
+static GtkWidget *make_distro_logo(void) {
+    char *id = g_get_os_info(G_OS_INFO_KEY_ID);
+    char *logo = g_get_os_info("LOGO");
+    GtkWidget *image = NULL;
+    GtkIconTheme *theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
+    /* LOGO is an icon-theme name, never a shell command or remote URL. */
+    if (logo && *logo && !strchr(logo, '/') && gtk_icon_theme_has_icon(theme, logo))
+        image = gtk_image_new_from_icon_name(logo);
+
+    if (!image && g_strcmp0(id, "ouvert") == 0) {
+        const char *paths[] = {
+            "/usr/share/pixmaps/ouvert-logo.png",
+            "/usr/share/pixmaps/ouvert-logo.svg",
+            "/usr/share/pixmaps/ouvert.png",
+            "/usr/share/ouvert/ouvert-logo.png",
+            "/usr/share/icons/hicolor/512x512/apps/ouvert-logo.png",
+            "/usr/share/icons/hicolor/scalable/apps/ouvert-logo.svg",
+            NULL
+        };
+        for (guint i = 0; paths[i] && !image; i++) {
+            if (g_file_test(paths[i], G_FILE_TEST_IS_REGULAR))
+                image = gtk_image_new_from_file(paths[i]);
         }
     }
-    fclose(f);
-    return res ? res : g_strdup("Linux");
+
+    if (!image && id && *id) {
+        char *candidate = g_strdup_printf("distributor-logo-%s", id);
+        if (gtk_icon_theme_has_icon(theme, candidate))
+            image = gtk_image_new_from_icon_name(candidate);
+        g_free(candidate);
+        if (!image) {
+            candidate = g_strdup_printf("%s-logo", id);
+            if (gtk_icon_theme_has_icon(theme, candidate))
+                image = gtk_image_new_from_icon_name(candidate);
+            g_free(candidate);
+        }
+    }
+
+    static const struct {
+        const char *id;
+        const char *icon;
+        const char *glyph;
+        const char *color;
+    } distros[] = {
+        { "arch", "archlinux-logo", "\uf303", "#1793d1" },
+        { "debian", "debian-logo", "\uf306", "#d70a53" },
+        { "fedora", "fedora-logo", "\uf30a", "#51a2da" },
+        { "ubuntu", "ubuntu-logo", "\uf31b", "#e95420" },
+        { "linuxmint", "linuxmint-logo", "\uf30e", "#69a942" },
+        { "manjaro", "manjaro-logo", "\uf312", "#35bf5c" },
+        { "opensuse-leap", "opensuse-logo", "\uf314", "#73ba25" },
+        { "opensuse-tumbleweed", "opensuse-logo", "\uf314", "#73ba25" },
+        { "gentoo", "gentoo-logo", "\uf30d", "#a698cf" },
+        { "alpine", "alpine-logo", "\uf300", "#0d8cbb" },
+        { "nixos", "nix-snowflake", "\uf313", "#7ebae4" },
+        { "ouvert", "ouvert-logo", NULL, NULL }
+    };
+    const char *glyph = "\uf17c"; /* Tux, Font Awesome Linux. */
+    const char *color = NULL; /* Inherit foreground for light/dark themes. */
+    for (guint i = 0; !image && i < G_N_ELEMENTS(distros); i++) {
+        if (g_strcmp0(id, distros[i].id) != 0) continue;
+        if (gtk_icon_theme_has_icon(theme, distros[i].icon))
+            image = gtk_image_new_from_icon_name(distros[i].icon);
+        if (distros[i].glyph) {
+            glyph = distros[i].glyph;
+            color = distros[i].color;
+        }
+        break;
+    }
+    if (image) {
+        gtk_image_set_pixel_size(GTK_IMAGE(image), 48);
+    } else {
+        image = gtk_label_new(NULL);
+        char *markup = color
+            ? g_markup_printf_escaped("<span font_family=\"Symbols Nerd Font\" size=\"36000\" foreground=\"%s\">%s</span>", color, glyph)
+            : g_markup_printf_escaped("<span font_family=\"Symbols Nerd Font\" size=\"36000\">%s</span>", glyph);
+        gtk_label_set_markup(GTK_LABEL(image), markup);
+        g_free(markup);
+    }
+    gtk_widget_set_size_request(image, 56, 56);
+    gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(image, id && *id ? id : "Linux");
+    g_free(id);
+    g_free(logo);
+    return image;
+}
+
+static GtkWidget *make_distro_row(const char *name) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    gtk_box_append(GTK_BOX(row), make_distro_logo());
+    GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+    gtk_widget_set_hexpand(text, TRUE);
+    gtk_widget_set_valign(text, GTK_ALIGN_CENTER);
+    GtkWidget *title = gtk_label_new(name);
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(title), TRUE);
+    GtkWidget *subtitle = gtk_label_new("Дистрибутив");
+    gtk_widget_add_css_class(subtitle, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(subtitle), 0.0f);
+    gtk_box_append(GTK_BOX(text), title);
+    gtk_box_append(GTK_BOX(text), subtitle);
+    gtk_box_append(GTK_BOX(row), text);
+    return row;
 }
 
 static GtkWidget *build_wifi_page(State *st) {
@@ -4024,7 +4142,7 @@ static GtkWidget *build_appearance_page(State *st) {
     gtk_label_set_ellipsize(GTK_LABEL(st->wall_path_lbl), PANGO_ELLIPSIZE_MIDDLE);
     gtk_box_append(GTK_BOX(wall_card), st->wall_path_lbl);
 
-    char *cur = read_current_wallpaper();
+    char *cur = read_current_wallpaper(st);
     if (g_file_test(cur, G_FILE_TEST_IS_REGULAR)) {
         g_strlcpy(st->cur_wall, cur, sizeof(st->cur_wall));
         gtk_picture_set_filename(GTK_PICTURE(st->wall_pic), cur);
@@ -4100,26 +4218,387 @@ static GtkWidget *build_keyboard_page(State *st) {
     return box;
 }
 
-static GtkWidget *build_system_page(void) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_add_css_class(box, "ps-page");
-    gtk_box_append(GTK_BOX(box), make_section_title("Система и устройства"));
+/* ==================== Конфиденциальность и безопасность ==================== */
 
-    gtk_box_append(GTK_BOX(box), make_tool_row(
-        "󰕾", "Звук", "Громкость, устройства вывода и микрофон (pavucontrol)", "pavucontrol"
-    ));
-    gtk_box_append(GTK_BOX(box), make_tool_row(
-        "󰈀", "Сеть и Wi-Fi", "Проводные и беспроводные соединения (NetworkManager)", "nm-connection-editor"
-    ));
-    gtk_box_append(GTK_BOX(box), make_tool_row(
-        "󰂯", "Bluetooth", "Поиск, сопряжение и устройства Bluetooth (Blueman)", "blueman-manager"
-    ));
+static char *get_privacy_prefs_path(void) {
+    char *dir = get_config_dir();
+    char *path = g_build_filename(dir, "privacy.ini", NULL);
+    g_free(dir);
+    return path;
+}
+
+static void load_privacy_prefs(gboolean *auto_lock, guint *delay,
+    gboolean *microphone_blocked) {
+    *auto_lock = FALSE;
+    *delay = 300;
+    *microphone_blocked = FALSE;
+    char *path = get_privacy_prefs_path();
+    GKeyFile *key = g_key_file_new();
+    if (g_key_file_load_from_file(key, path, G_KEY_FILE_NONE, NULL)) {
+        GError *error = NULL;
+        gboolean value = g_key_file_get_boolean(key, "Privacy", "auto_lock", &error);
+        if (!error) *auto_lock = value;
+        g_clear_error(&error);
+        gint seconds = g_key_file_get_integer(key, "Privacy", "lock_delay", &error);
+        if (!error && seconds >= 60 && seconds <= 3600) *delay = (guint)seconds;
+        g_clear_error(&error);
+        value = g_key_file_get_boolean(key, "Privacy", "microphone_blocked", &error);
+        if (!error) *microphone_blocked = value;
+        g_clear_error(&error);
+    }
+    g_key_file_unref(key);
+    g_free(path);
+}
+
+static void start_idle_lock(gboolean enabled, guint seconds) {
+    char *stop_argv[] = { "pkill", "-x", "swayidle", NULL };
+    if (!enabled) {
+        run_command_background(stop_argv);
+        return;
+    }
+    char *swayidle = g_find_program_in_path("swayidle");
+    if (!swayidle) {
+        g_free(swayidle);
+        return;
+    }
+    g_free(swayidle);
+    char *command = g_strdup_printf(
+        "pkill -x swayidle 2>/dev/null; exec swayidle -w timeout %u "
+        "'plume-lock' before-sleep 'plume-lock'", seconds);
+    char *start_argv[] = { "sh", "-c", command, NULL };
+    run_command_background(start_argv);
+    g_free(command);
+}
+
+static void save_and_apply_privacy(State *st) {
+    gboolean auto_lock = gtk_switch_get_active(GTK_SWITCH(st->privacy_lock_switch));
+    gboolean microphone_blocked = gtk_switch_get_active(
+        GTK_SWITCH(st->privacy_microphone_switch));
+    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(st->privacy_lock_delay));
+    static const guint delays[] = { 60, 300, 600, 900, 1800 };
+    guint delay = selected < G_N_ELEMENTS(delays) ? delays[selected] : 300;
+    GKeyFile *key = g_key_file_new();
+    g_key_file_set_boolean(key, "Privacy", "auto_lock", auto_lock);
+    g_key_file_set_integer(key, "Privacy", "lock_delay", delay);
+    g_key_file_set_boolean(key, "Privacy", "microphone_blocked", microphone_blocked);
+    gsize length = 0;
+    char *data = g_key_file_to_data(key, &length, NULL);
+    char *path = get_privacy_prefs_path();
+    g_file_set_contents(path, data, length, NULL);
+    g_free(path);
+    g_free(data);
+    g_key_file_unref(key);
+
+    start_idle_lock(auto_lock, delay);
+    if (g_find_program_in_path("wpctl")) {
+        char *mute_argv[] = { "wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@",
+            microphone_blocked ? "1" : "0", NULL };
+        run_command_background(mute_argv);
+    }
+    gtk_label_set_text(GTK_LABEL(st->privacy_status_label), microphone_blocked
+        ? "Автоблокировка применена, микрофон выключен"
+        : "Параметры конфиденциальности применены");
+}
+
+static void on_privacy_changed(GObject *object, GParamSpec *pspec,
+    gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    State *st = user_data;
+    if (!st->privacy_loading) save_and_apply_privacy(st);
+}
+
+static GtkWidget *build_privacy_page(State *st) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title("Конфиденциальность и безопасность"));
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_widget_add_css_class(card, "ps-card");
+    st->privacy_lock_switch = gtk_switch_new();
+    gtk_box_append(GTK_BOX(card), make_search_source_row("Автоматическая блокировка",
+        "Блокирует экран при бездействии и перед переходом в сон.",
+        st->privacy_lock_switch));
+    GtkWidget *delay_title = gtk_label_new("Блокировать через");
+    gtk_widget_add_css_class(delay_title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(delay_title), 0.0f);
+    st->privacy_lock_delay = gtk_drop_down_new_from_strings((const char *const[]) {
+        "1 минуту", "5 минут", "10 минут", "15 минут", "30 минут", NULL });
+    gtk_box_append(GTK_BOX(card), delay_title);
+    gtk_box_append(GTK_BOX(card), st->privacy_lock_delay);
+    st->privacy_microphone_switch = gtk_switch_new();
+    gtk_box_append(GTK_BOX(card), make_search_source_row("Выключить микрофон",
+        "Отключает выбранный микрофон через PipeWire.",
+        st->privacy_microphone_switch));
+    gtk_box_append(GTK_BOX(box), card);
+    st->privacy_status_label = gtk_label_new("Параметры применяются сразу");
+    gtk_widget_add_css_class(st->privacy_status_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->privacy_status_label), 0.0f);
+    gtk_box_append(GTK_BOX(box), st->privacy_status_label);
+
+    gboolean auto_lock, microphone_blocked;
+    guint delay;
+    load_privacy_prefs(&auto_lock, &delay, &microphone_blocked);
+    const guint values[] = { 60, 300, 600, 900, 1800 };
+    guint selected = 1;
+    for (guint i = 0; i < G_N_ELEMENTS(values); i++) if (values[i] == delay) selected = i;
+    st->privacy_loading = TRUE;
+    gtk_switch_set_active(GTK_SWITCH(st->privacy_lock_switch), auto_lock);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(st->privacy_lock_delay), selected);
+    gtk_switch_set_active(GTK_SWITCH(st->privacy_microphone_switch), microphone_blocked);
+    st->privacy_loading = FALSE;
+    g_signal_connect(st->privacy_lock_switch, "notify::active",
+        G_CALLBACK(on_privacy_changed), st);
+    g_signal_connect(st->privacy_lock_delay, "notify::selected",
+        G_CALLBACK(on_privacy_changed), st);
+    g_signal_connect(st->privacy_microphone_switch, "notify::active",
+        G_CALLBACK(on_privacy_changed), st);
     return box;
+}
+
+/* ==================== Система ==================== */
+
+static GtkWidget *build_about_page(void);
+
+static void system_check_child_setup(gpointer data) {
+    (void)data;
+    setsid();
+}
+
+static void stop_system_check(State *st) {
+    if (!st->system_process || st->system_installing) return;
+    const char *identifier = g_subprocess_get_identifier(st->system_process);
+    if (identifier) {
+        pid_t pid = (pid_t)g_ascii_strtoll(identifier, NULL, 10);
+        if (pid > 1 && kill(-pid, SIGTERM) != 0)
+            g_subprocess_send_signal(st->system_process, SIGTERM);
+    }
+}
+
+static void on_system_cancel(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    if (st->system_installing) return;
+    if (!st->system_updates_running) {
+        gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_install_revealer), FALSE);
+        gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_results_revealer), FALSE);
+        gtk_widget_set_sensitive(st->system_install_button, FALSE);
+        gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+            "Проверка выполняется только по кнопке");
+        return;
+    }
+    st->system_updates_cancelled = TRUE;
+    gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+    gtk_label_set_text(GTK_LABEL(st->system_updates_label), "Отменяем проверку…");
+    stop_system_check(st);
+}
+
+static gboolean on_settings_close(GtkWindow *window, gpointer user_data) {
+    (void)window;
+    State *st = user_data;
+    stop_system_check(st);
+    g_clear_object(&st->system_process);
+    return FALSE;
+}
+
+static void on_system_updates_finished(GObject *source, GAsyncResult *result,
+    gpointer user_data) {
+    State *st = user_data;
+    char *output = NULL;
+    char *error_output = NULL;
+    GError *error = NULL;
+    gboolean received = g_subprocess_communicate_utf8_finish(
+        G_SUBPROCESS(source), result, &output, &error_output, &error);
+    if (st->system_process != G_SUBPROCESS(source)) {
+        g_clear_error(&error);
+        g_free(error_output);
+        g_free(output);
+        return;
+    }
+    g_clear_object(&st->system_process);
+    st->system_updates_running = FALSE;
+    gtk_widget_set_sensitive(st->system_updates_button, TRUE);
+    gtk_widget_set_sensitive(st->system_cancel_button, FALSE);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_install_revealer), FALSE);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_results_revealer), FALSE);
+    clear_box(st->system_updates_list);
+    int exit_status = received && g_subprocess_get_if_exited(G_SUBPROCESS(source))
+        ? g_subprocess_get_exit_status(G_SUBPROCESS(source)) : -1;
+    if (st->system_updates_cancelled) {
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label), "Проверка отменена");
+    } else if (exit_status == 2) {
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+            "Обновлений нет");
+    } else if (!received || exit_status != 0) {
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+            error_output && *error_output ? error_output : "Не удалось проверить обновления");
+    } else if (!output || !*output) {
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+            "Система обновлена");
+    } else {
+        char **lines = g_strsplit(output, "\n", -1);
+        guint count = 0;
+        for (guint i = 0; lines[i]; i++) {
+            g_strstrip(lines[i]);
+            if (!lines[i][0]) continue;
+            GtkWidget *line = gtk_label_new(lines[i]);
+            gtk_label_set_xalign(GTK_LABEL(line), 0.0f);
+            gtk_label_set_selectable(GTK_LABEL(line), TRUE);
+            gtk_label_set_ellipsize(GTK_LABEL(line), PANGO_ELLIPSIZE_END);
+            gtk_widget_set_tooltip_text(line, lines[i]);
+            gtk_box_append(GTK_BOX(st->system_updates_list), line);
+            count++;
+        }
+        char *status = g_strdup_printf("Доступно обновлений: %u", count);
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label), status);
+        gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_install_revealer), count > 0);
+        gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_results_revealer), count > 0);
+        gtk_widget_set_sensitive(st->system_cancel_button, count > 0);
+        g_free(status);
+        g_strfreev(lines);
+    }
+    g_clear_error(&error);
+    g_free(error_output);
+    g_free(output);
+}
+
+static void on_system_check_updates(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    if (st->system_updates_running) return;
+    gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_install_revealer), FALSE);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_results_revealer), FALSE);
+    gtk_widget_set_sensitive(st->system_cancel_button, FALSE);
+    gtk_label_set_text(GTK_LABEL(st->system_updates_label), "Проверяем обновления…");
+    GError *error = NULL;
+    GSubprocessLauncher *launcher = g_subprocess_launcher_new(
+        G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE);
+    g_subprocess_launcher_set_child_setup(launcher, system_check_child_setup, NULL, NULL);
+    GSubprocess *process = g_subprocess_launcher_spawn(launcher, &error, "checkupdates", NULL);
+    g_object_unref(launcher);
+    if (!process) {
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+            "Установи пакет pacman-contrib для проверки обновлений");
+        g_clear_error(&error);
+        return;
+    }
+    st->system_updates_running = TRUE;
+    st->system_updates_cancelled = FALSE;
+    gtk_widget_set_sensitive(st->system_install_button, TRUE);
+    st->system_process = g_object_ref(process);
+    st->system_updates_button = GTK_WIDGET(button);
+    gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+    gtk_widget_set_sensitive(st->system_cancel_button, TRUE);
+    g_subprocess_communicate_utf8_async(process, NULL, NULL,
+        on_system_updates_finished, st);
+    g_object_unref(process);
+}
+
+static void on_system_install_finished(GObject *source, GAsyncResult *result,
+    gpointer user_data) {
+    State *st = user_data;
+    GError *error = NULL;
+    g_subprocess_wait_finish(G_SUBPROCESS(source), result, &error);
+    g_clear_error(&error);
+    if (st->system_process != G_SUBPROCESS(source)) return;
+    g_clear_object(&st->system_process);
+    st->system_installing = FALSE;
+    st->system_updates_running = FALSE;
+    gtk_widget_set_sensitive(st->system_updates_button, TRUE);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_install_revealer), FALSE);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(st->system_results_revealer), FALSE);
+    gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+        "Окно обновления закрыто. Проверь обновления ещё раз.");
+}
+
+static void on_system_install(GtkButton *button, gpointer user_data) {
+    State *st = user_data;
+    if (st->system_updates_running) return;
+    GError *error = NULL;
+    GSubprocess *process = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &error,
+        "kitty", "--title", "Обновление системы — Plume", "sh", "-c",
+        "sudo pacman -Syu; result=$?; printf '\\nКод завершения: %s\\nНажми Enter, чтобы закрыть окно.\\n' \"$result\"; "
+        "read -r answer; exit \"$result\"", NULL);
+    if (!process) {
+        gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+            "Не удалось открыть терминал Kitty для обновления");
+        g_clear_error(&error);
+        return;
+    }
+    st->system_process = g_object_ref(process);
+    st->system_installing = TRUE;
+    st->system_updates_running = TRUE;
+    gtk_widget_set_sensitive(st->system_updates_button, FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+    gtk_widget_set_sensitive(st->system_cancel_button, FALSE);
+    gtk_label_set_text(GTK_LABEL(st->system_updates_label),
+        "Подтверди обновление в терминале. Отмена проверки доступна до начала установки.");
+    g_subprocess_wait_async(process, NULL, on_system_install_finished, st);
+    g_object_unref(process);
+}
+
+static GtkWidget *build_system_page(State *st) {
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title("О системе"));
+    gtk_box_append(GTK_BOX(box), build_about_page());
+    GtkWidget *updates = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_add_css_class(updates, "ps-card");
+    GtkWidget *title = gtk_label_new("Обновления");
+    gtk_widget_add_css_class(title, "ps-card-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    st->system_updates_label = gtk_label_new("Проверка выполняется только по кнопке");
+    gtk_widget_add_css_class(st->system_updates_label, "ps-muted");
+    gtk_label_set_xalign(GTK_LABEL(st->system_updates_label), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(st->system_updates_label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(st->system_updates_label), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_max_width_chars(GTK_LABEL(st->system_updates_label), 60);
+    GtkWidget *check = gtk_button_new_with_label("Проверить обновления");
+    st->system_updates_button = check;
+    gtk_widget_add_css_class(check, "ps-btn-primary");
+    gtk_widget_set_halign(check, GTK_ALIGN_START);
+    g_signal_connect(check, "clicked", G_CALLBACK(on_system_check_updates), st);
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    st->system_install_button = gtk_button_new_with_label("Обновить");
+    gtk_widget_add_css_class(st->system_install_button, "ps-btn-primary");
+    st->system_install_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(st->system_install_revealer),
+        GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
+    gtk_revealer_set_transition_duration(GTK_REVEALER(st->system_install_revealer), 240);
+    gtk_revealer_set_child(GTK_REVEALER(st->system_install_revealer), st->system_install_button);
+    g_signal_connect(st->system_install_button, "clicked", G_CALLBACK(on_system_install), st);
+    st->system_cancel_button = gtk_button_new_with_label("Отмена");
+    gtk_widget_add_css_class(st->system_cancel_button, "ps-btn-danger");
+    gtk_widget_set_sensitive(st->system_cancel_button, FALSE);
+    g_signal_connect(st->system_cancel_button, "clicked", G_CALLBACK(on_system_cancel), st);
+    gtk_box_append(GTK_BOX(actions), check);
+    gtk_box_append(GTK_BOX(actions), st->system_install_revealer);
+    gtk_box_append(GTK_BOX(actions), st->system_cancel_button);
+    st->system_updates_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    GtkWidget *list_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(list_scroll),
+        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(list_scroll), 240);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(list_scroll), TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(list_scroll), st->system_updates_list);
+    st->system_results_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(st->system_results_revealer),
+        GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    gtk_revealer_set_transition_duration(GTK_REVEALER(st->system_results_revealer), 300);
+    gtk_revealer_set_child(GTK_REVEALER(st->system_results_revealer), list_scroll);
+    gtk_box_append(GTK_BOX(updates), title);
+    gtk_box_append(GTK_BOX(updates), st->system_updates_label);
+    gtk_box_append(GTK_BOX(updates), actions);
+    gtk_box_append(GTK_BOX(updates), st->system_results_revealer);
+    gtk_box_append(GTK_BOX(box), updates);
+    return scroll;
 }
 
 static GtkWidget *build_about_page(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
-    gtk_widget_add_css_class(box, "ps-page");
+    gtk_box_append(GTK_BOX(box), make_section_title("О Plume"));
 
     GtkWidget *hero = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_add_css_class(hero, "ps-card");
@@ -4142,6 +4621,7 @@ static GtkWidget *build_about_page(void) {
     GtkWidget *ver = gtk_label_new("Версия 0.1.0-beta1 · Wayland Desktop Environment");
     gtk_widget_add_css_class(ver, "ps-muted");
     gtk_label_set_xalign(GTK_LABEL(ver), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(ver), TRUE);
     gtk_box_append(GTK_BOX(htxt), name);
     gtk_box_append(GTK_BOX(htxt), ver);
     gtk_box_append(GTK_BOX(hero), htxt);
@@ -4154,38 +4634,13 @@ static GtkWidget *build_about_page(void) {
     struct utsname u;
     const char *kernel = (uname(&u) == 0) ? u.release : "неизвестно";
 
-    gtk_box_append(GTK_BOX(card), make_info_row("Система", os_name));
+    gtk_box_append(GTK_BOX(card), make_distro_row(os_name));
     gtk_box_append(GTK_BOX(card), make_info_row("Ядро", kernel));
     gtk_box_append(GTK_BOX(card), make_info_row("Композитор", "Wayfire (wlroots · Wayland)"));
     gtk_box_append(GTK_BOX(card), make_info_row("Компоненты", "Waybar · Mako · GTK4"));
     gtk_box_append(GTK_BOX(card), make_info_row("Репозиторий", "github.com/etern4llyfunny/plume"));
     g_free(os_name);
 
-    gtk_box_append(GTK_BOX(box), card);
-    return box;
-}
-
-static GtkWidget *build_placeholder_page(const char *title, const char *icon_txt,
-    const char *description) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
-    gtk_widget_add_css_class(box, "ps-page");
-    gtk_box_append(GTK_BOX(box), make_section_title(title));
-
-    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_widget_add_css_class(card, "ps-card");
-    GtkWidget *icon = gtk_label_new(icon_txt);
-    gtk_widget_add_css_class(icon, "ps-placeholder-icon");
-    gtk_widget_set_halign(icon, GTK_ALIGN_START);
-    GtkWidget *status = gtk_label_new("Раздел готовится");
-    gtk_widget_add_css_class(status, "ps-card-title");
-    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
-    GtkWidget *text = gtk_label_new(description);
-    gtk_widget_add_css_class(text, "ps-muted");
-    gtk_label_set_xalign(GTK_LABEL(text), 0.0f);
-    gtk_label_set_wrap(GTK_LABEL(text), TRUE);
-    gtk_box_append(GTK_BOX(card), icon);
-    gtk_box_append(GTK_BOX(card), status);
-    gtk_box_append(GTK_BOX(card), text);
     gtk_box_append(GTK_BOX(box), card);
     return box;
 }
@@ -4284,8 +4739,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     add_nav_item(nav, "󰐪", "Принтеры", "printers");
     add_nav_item(nav, "󰖚", "Специальные возможности", "accessibility");
     add_nav_item(nav, "󰌾", "Конфиденциальность и безопасность", "privacy");
-    add_nav_item(nav, "󰒓", "Система", "system");
-    add_nav_item(nav, "󰋼", "О Plume", "about");
+    add_nav_item(nav, "󰒓", "О системе", "system");
 
     GtkWidget *nav_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(nav_scroll),
@@ -4324,10 +4778,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_stack_add_named(GTK_STACK(st->stack), build_printers_page(st), "printers");
     gtk_stack_add_named(GTK_STACK(st->stack),
         build_accessibility_page(st), "accessibility");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_placeholder_page(
-        "Конфиденциальность и безопасность", "󰌾", "Доступ приложений, блокировка экрана и безопасность системы."), "privacy");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_system_page(), "system");
-    gtk_stack_add_named(GTK_STACK(st->stack), build_about_page(), "about");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_privacy_page(st), "privacy");
+    gtk_stack_add_named(GTK_STACK(st->stack), build_system_page(st), "system");
     gtk_box_append(GTK_BOX(root_box), st->stack);
 
     apply_window_css(st);
@@ -4336,6 +4788,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(search, "search-changed", G_CALLBACK(on_nav_search_changed), nav);
     g_signal_connect(st->win, "notify::is-active",
         G_CALLBACK(on_settings_active_changed), st);
+    g_signal_connect(st->win, "close-request", G_CALLBACK(on_settings_close), st);
     gtk_list_box_select_row(GTK_LIST_BOX(nav), gtk_list_box_get_row_at_index(GTK_LIST_BOX(nav), 7));
 
     gtk_window_present(GTK_WINDOW(st->win));

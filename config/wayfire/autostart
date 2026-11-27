@@ -17,10 +17,19 @@ if [ -f "$HOME/.config/plume/wallpaper" ]; then
   USER_WALL="$(cat "$HOME/.config/plume/wallpaper" 2>/dev/null || true)"
 fi
 
+THEME_MODE="$(sed -n 's/^mode=//p' "$HOME/.config/plume/theme.ini" 2>/dev/null | tail -n 1 | tr -d ' ')"
+if [ "$THEME_MODE" = "light" ]; then
+  DEFAULT_WALL="$ROOT/assets/wallpaper-light.png"
+  DEFAULT_COLOR="#e8ecf3"
+else
+  DEFAULT_WALL="$ROOT/assets/wallpaper.png"
+  DEFAULT_COLOR="#141821"
+fi
+
 WALL=""
 for candidate in \
   "$USER_WALL" \
-  "$ROOT/assets/wallpaper.png" \
+  "$DEFAULT_WALL" \
   "/usr/share/backgrounds/ouvert-walp.png" \
   "/usr/share/pixmaps/ouvert-walp.png" \
   "$HOME/pzhavos/pkgbuilds/ouvert-branding/ouvert-walp.png"; do
@@ -34,7 +43,7 @@ if [ -n "$WALL" ]; then
   swaybg -i "$WALL" -m fill &
   echo $! >> "$PIDS"
 else
-  swaybg -c "#141821" &
+  swaybg -c "$DEFAULT_COLOR" &
   echo $! >> "$PIDS"
 fi
 
@@ -51,6 +60,21 @@ if [ -f "$COLOR_CFG" ] && command -v gammastep >/dev/null 2>&1; then
   [ -n "$COLOR_TEMPERATURE" ] || COLOR_TEMPERATURE=4500
   if [ "$COLOR_WARM" = "true" ]; then
     gammastep -P -O "$COLOR_TEMPERATURE" >/dev/null 2>&1 &
+  fi
+fi
+
+PRIVACY_CFG="$HOME/.config/plume/privacy.ini"
+if [ -f "$PRIVACY_CFG" ]; then
+  AUTO_LOCK="$(sed -n 's/^auto_lock=//p' "$PRIVACY_CFG" | tail -n 1 | tr -d ' ')"
+  LOCK_DELAY="$(sed -n 's/^lock_delay=//p' "$PRIVACY_CFG" | tail -n 1 | tr -d ' ')"
+  MICROPHONE_BLOCKED="$(sed -n 's/^microphone_blocked=//p' "$PRIVACY_CFG" | tail -n 1 | tr -d ' ')"
+  [ -n "$LOCK_DELAY" ] || LOCK_DELAY=300
+  if [ "$AUTO_LOCK" = "true" ] && command -v swayidle >/dev/null 2>&1; then
+    swayidle -w timeout "$LOCK_DELAY" 'plume-lock' before-sleep 'plume-lock' &
+    echo $! >> "$PIDS"
+  fi
+  if [ "$MICROPHONE_BLOCKED" = "true" ] && command -v wpctl >/dev/null 2>&1; then
+    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1 >/dev/null 2>&1 || true
   fi
 fi
 

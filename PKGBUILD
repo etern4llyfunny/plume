@@ -17,6 +17,8 @@ depends=(
   'python'
   'thunar'
   'swaylock'
+  'swayidle'
+  'pacman-contrib'
   'grim'
   'slurp'
   'wl-clipboard'
